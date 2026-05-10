@@ -63,28 +63,71 @@ SYSTEM_INSTRUCTION = """
 """
 
 
+def convert_history_to_contents(history: list) -> list:
+    """
+    Convert frontend history format:
+      [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
+    into google-genai SDK types.Content objects.
+    Skips entries with empty content. Maps "assistant" -> "model".
+    """
+    contents = []
+    for msg in history:
+        role = msg.get("role", "user")
+        content = msg.get("content", "").strip()
+
+        if not content:
+            continue  # Skip empty assistant placeholders
+
+        # Gemini SDK uses "model" not "assistant"
+        sdk_role = "model" if role == "assistant" else "user"
+
+        contents.append(
+            types.Content(
+                role=sdk_role,
+                parts=[types.Part.from_text(text=content)],
+            )
+        )
+    return contents
+
+
 async def extract_parameters(input_data: str, is_image: bool, history: list = None):
     last_error = None
     for model_name in MODELS:
         try:
-            contents = []
+            # Build contents list from converted history
+            contents = convert_history_to_contents(history or [])
 
-            if history:
-                for msg in history:
-                    contents.append(msg)
-
-            prompt = "Analyze these engineering problems. If multiple exist, separate them. If options are provided, extract them clearly."
+            prompt = (
+                "Analyze these engineering problems. If multiple exist, separate them. "
+                "If options are provided, extract them clearly."
+            )
 
             if is_image:
                 if "," in input_data:
                     input_data = input_data.split(",")[1]
                 image_bytes = base64.b64decode(input_data)
+                # Final user turn: image + prompt
                 contents.append(
-                    types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
+                    types.Content(
+                        role="user",
+                        parts=[
+                            types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                            types.Part.from_text(text=prompt),
+                        ],
+                    )
                 )
-                contents.append(prompt)
             else:
-                contents.append(f"User Input: {input_data}\n\n{prompt}")
+                # Final user turn: text + prompt
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[
+                            types.Part.from_text(
+                                text=f"User Input: {input_data}\n\n{prompt}"
+                            )
+                        ],
+                    )
+                )
 
             response = await asyncio.to_thread(
                 client.models.generate_content,
@@ -115,7 +158,6 @@ async def extract_parameters(input_data: str, is_image: bool, history: list = No
 
 
 def make_error_event(message: str, problem_id: str = None) -> str:
-    """Helper to safely serialize error SSE events — avoids nested f-string quote conflicts."""
     payload = {"type": "error", "message": message}
     if problem_id is not None:
         payload["problem_id"] = problem_id
@@ -123,7 +165,6 @@ def make_error_event(message: str, problem_id: str = None) -> str:
 
 
 def make_event(data: dict) -> str:
-    """Helper to safely serialize any SSE event."""
     return f"data: {json.dumps(data)}\n\n"
 
 
@@ -147,9 +188,11 @@ async def solve(request: Request):
         return StreamingResponse(missing_input(), media_type="text/event-stream")
 
     async def event_generator():
-        yield make_event({"type": "step", "content": "Studio Kernel: Analyzing input context..."})
+        yield make_event({
+            "type": "step",
+            "content": "Studio Kernel: Analyzing input context...",
+        })
 
-        # 1. Extraction phase
         data = await extract_parameters(user_input, is_image, history)
 
         if "error" in data:
@@ -158,7 +201,6 @@ async def solve(request: Request):
 
         sub_problems = data.get("sub_problems", [])
         if not sub_problems and "topic" in data:
-            # Migration path: Gemini returned single object instead of array
             sub_problems = [data]
 
         if not sub_problems:
@@ -170,7 +212,6 @@ async def solve(request: Request):
             "summary": data.get("summary", "Processing multiple queries"),
         })
 
-        # 2. Solving phase
         for idx, sub in enumerate(sub_problems):
             topic = sub.get("topic", "unknown").lower()
             problem_id = sub.get("id", f"p{idx}")
@@ -207,12 +248,10 @@ async def solve(request: Request):
                     async for chunk in solver_stream:
                         chunk["problem_id"] = problem_id
 
-                        # Option matching on final chunk
                         if chunk.get("type") == "final" and sub.get("options"):
                             ans_text = str(chunk.get("answer", ""))
-                            options = sub["options"]
                             matched = False
-                            for opt in options:
+                            for opt in sub["options"]:
                                 opt_label = str(opt.get("label", "")).lower()
                                 opt_val = str(opt.get("val", ""))
                                 if opt_label in ans_text.lower() or opt_val in ans_text:
