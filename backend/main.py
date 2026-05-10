@@ -20,7 +20,7 @@ app = FastAPI()
 
 # Configure Gemini
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-MODELS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.5-flash-8b"]
+MODELS = ["gemini-3-flash-preview", "gemini-3.1-pro-preview"]
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -108,8 +108,12 @@ async def result_generator(raw_data: Dict[str, Any]):
     if is_image:
         yield f"data: {json.dumps({'type': 'step', 'content': 'AI Vision: Scanning diagram for engineering constraints...'})}\n\n"
     
-    # 1. Extraction step
-    data = await extract_parameters(user_input, is_image)
+    # 1. Extraction step (Skip if frontend already provided extracted data)
+    if "topic" in raw_data and "units" in raw_data:
+        data = raw_data
+        yield f"data: {json.dumps({'type': 'step', 'content': 'Using pre-extracted parameters...'})}\n\n"
+    else:
+        data = await extract_parameters(user_input, is_image)
     
     if "error" in data:
         msg = "This is not a valid mathematics or engineering problem." if data["error"] == "not_math" else "Unsupported topic or extraction error."

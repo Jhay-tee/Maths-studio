@@ -6,8 +6,40 @@ import {
   X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { GoogleGenAI } from '@google/genai';
 import { saveComputation, getHistory, deleteHistoryItem } from './lib/db';
-// import { classifyProblem } from './lib/ai'; 
+
+const SYSTEM_PROMPT = `
+  You are an "Engineering Parameter Extraction Engine".
+  Your job is to:
+  1. Read the user's problem (Text or Image).
+  2. Classify the topic (Algebra, Calculus, Mechanics, Structural, etc.).
+  3. Extract parameters into a clean JSON format for a Python solver.
+  4. Handle COMPLEX units:
+     - Detect distributed loads like 'N/mm', 'kN/m', 'lb/ft'.
+     - Detect power-of-ten notation (e.g., '2e6', '10^3', 'x10^5').
+     - Normalize all values to base SI units (Meters, Newtons, Pascals, Kilograms) in 'si_val'.
+  5. INFUSE STANDARD CONSTANTS:
+     - If the problem involves water but no density is given, add {"param": "density_water", "si_val": 1000, "unit": "kg/m3", "type": "constant"}.
+     - If gravity is needed but missing, add {"param": "gravity", "si_val": 9.81, "unit": "m/s2", "type": "constant"}.
+     - If Young's Modulus for Steel is implied/needed but missing, assume 2.0e11 (200GPa).
+     - ONLY add if NOT provided by user.
+  6. BEAM SPECIFIC EXTRACTION:
+     - If topic is 'beam', provide a 'loads' array.
+     - Point load: {"type": "point", "value": magnitude_in_N, "pos": position_in_m}.
+     - Distributed load: {"type": "distributed", "value": magnitude_in_N_per_m, "start": start_m, "end": end_m}.
+  7. Provide a short "summary" string (max 60 chars).
+  8. For EACH parameter, return: {"val": original_numeric, "unit": "raw_unit", "si_val": normalized, "si_unit": "SI", "type": "length|force|distributed_load|constant", "param": "name"}.
+  9. Return a 'units' array containing all extracted parameters.
+
+  STRICT RULES:
+  - NO conversational behavior.
+  - IF input is offensive or unrelated to engineering/math, return {"error": "not_math"}.
+  - Output ONLY valid JSON.
+  - Topic must be lowercase.
+`;
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // Modular Components (Eager Load)
 import HistorySidebar from './components/HistorySidebar';
@@ -82,12 +114,42 @@ export default function App() {
     const API_BASE = import.meta.env.VITE_BACKEND_URL || '';
 
     try {
-      // 1. Compute with raw input (Python handles AI extraction now)
+      // 1. AI Extraction locally in frontend
+      setCurrentSteps(prev => [...prev, "AI Extraction: Interpreting problem context..."]);
+      
+      let aiParts;
+      if (inputMode === 'image') {
+        aiParts = [
+          { inlineData: { data: imagePreview, mimeType: "image/jpeg" } },
+          { text: "Extract engineering parameters from this image for a solver engine. Output ONLY JSON." }
+        ];
+      } else {
+        aiParts = inputText;
+      }
+
+      const aiResult = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: aiParts,
+        config: {
+          systemInstruction: SYSTEM_PROMPT,
+          responseMimeType: 'application/json'
+        }
+      });
+
+      const extractedData = JSON.parse(aiResult.text);
+
+      if (extractedData.error) {
+        throw new Error(extractedData.error === 'not_math' 
+          ? "This is not a valid mathematics or engineering problem."
+          : "This problem is outside supported engineering domains.");
+      }
+
+      // 2. Solve with extracted data
       const endpoint = API_BASE ? `${API_BASE}/solve` : '/api/compute';
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...extractedData, input: inputText, type: inputMode }),
         signal: abortControllerRef.current.signal
       });
 
