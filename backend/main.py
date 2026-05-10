@@ -4,11 +4,11 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 import json
 import asyncio
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import base64
 import logging
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -28,10 +28,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure Gemini
+# Configure Gemini client (new SDK style)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
 
@@ -68,41 +67,49 @@ async def extract_parameters(input_data: str, is_image: bool, history: list = No
     last_error = None
     for model_name in MODELS:
         try:
-            model = genai.GenerativeModel(
-                model_name=model_name,
-                system_instruction=SYSTEM_INSTRUCTION
-            )
-            
             contents = []
+
+            # Add history if provided
             if history:
                 for msg in history:
-                    contents.append(msg) # Standard LangChain/Gemini history format expected
-            
+                    contents.append(msg)
+
             prompt = "Analyze these engineering problems. If multiple exist, separate them. If options are provided, extract them clearly."
-            
+
             if is_image:
                 if "," in input_data:
                     input_data = input_data.split(",")[1]
-                image_data = base64.b64decode(input_data)
-                contents.append({'mime_type': 'image/jpeg', 'data': image_data})
+                image_bytes = base64.b64decode(input_data)
+                contents.append(
+                    types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
+                )
                 contents.append(prompt)
             else:
                 contents.append(f"User Input: {input_data}\n\n{prompt}")
-                
-            response = await asyncio.to_thread(model.generate_content, contents)
-            
+
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model=model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_INSTRUCTION,
+                )
+            )
+
             text = response.text.replace('```json', '').replace('```', '').strip()
             data = json.loads(text)
             data["_model"] = model_name
             return data
+
         except Exception as e:
             logger.warning(f"Model {model_name} failed: {e}")
             last_error = str(e)
             if "429" in last_error or "quota" in last_error.lower():
                 continue
             break
-            
+
     return {"error": last_error or "Extraction failed"}
+
 
 @app.post("/solve")
 async def solve(request: Request):
@@ -111,31 +118,28 @@ async def solve(request: Request):
     input_type = raw_data.get("type", "text")
     history = raw_data.get("history", [])
     is_image = input_type == "image"
-    
+
     async def event_generator():
         yield f"data: {json.dumps({'type': 'step', 'content': 'Studio Kernel: Analyzing input context...'})}\n\n"
-        
-        # 1. Extraction Phase
+
         data = await extract_parameters(user_input, is_image, history)
-        
+
         if "error" in data:
-            yield f"data: {json.dumps({'type': 'error', 'message': f'Extraction Failed: {data['error']}'})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Extraction Failed: {data[\"error\"]}'})}\n\n"
             return
 
         sub_problems = data.get("sub_problems", [])
         if not sub_problems and "topic" in data:
-            # Migration path for older schema if Gemini returns single object
             sub_problems = [data]
 
         yield f"data: {json.dumps({'type': 'meta', 'summary': data.get('summary', 'Processing multiple queries')})}\n\n"
-        
-        # 2. Solving Phase iterate through all sub problems
+
         for idx, sub in enumerate(sub_problems):
             topic = sub.get("topic", "unknown").lower()
             problem_id = sub.get("id", f"p{idx}")
-            
+
             yield f"data: {json.dumps({'type': 'step', 'content': f'Solving Sub-problem {idx + 1}: {topic.capitalize()}'})}\n\n"
-            
+
             if "units" in sub:
                 yield f"data: {json.dumps({'type': 'units', 'data': sub['units'], 'problem_id': problem_id})}\n\n"
 
@@ -156,15 +160,11 @@ async def solve(request: Request):
 
                 if solver_stream:
                     async for chunk in solver_stream:
-                        # Append metadata about which problem this chunk belongs to
                         chunk["problem_id"] = problem_id
-                        
-                        # Handle Option Matching at final step if options exist
+
                         if chunk["type"] == "final" and sub.get("options"):
                             ans_text = chunk["answer"]
                             options = sub["options"]
-                            # Simple heuristic for option matching
-                            # In a production app, we'd use Gemini again or more robust regex
                             matched = False
                             for opt in options:
                                 if str(opt.get("label")).lower() in ans_text.lower() or str(opt.get("val")) in ans_text:
@@ -177,11 +177,13 @@ async def solve(request: Request):
                         yield f"data: {json.dumps(chunk)}\n\n"
                 else:
                     yield f"data: {json.dumps({'type': 'final', 'answer': f'Computed generic results for {topic}.', 'problem_id': problem_id})}\n\n"
+
             except Exception as e:
                 logger.error(f"Solver error in sub-problem {idx}: {e}")
                 yield f"data: {json.dumps({'type': 'error', 'message': f'Solver Error ({topic}): {str(e)}', 'problem_id': problem_id})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 
 if __name__ == "__main__":
     import uvicorn
