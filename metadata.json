@@ -1,0 +1,6 @@
+{
+  "name": "Maths Studio by Jhaytee",
+  "description": "A deterministic engineering computation studio for math, mechanics, and structural analysis.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["Math Solving", "Engineering Diagrams", "Streaming Solutions"]
+}
