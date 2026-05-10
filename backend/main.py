@@ -33,54 +33,79 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 
 MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
 
-SYSTEM_INSTRUCTION = """
-  You are an "Engineering Parameter Extraction & Solution Orchestrator".
-  Your job is to:
-  1. Read the user's input (Text/Image) and any provided chat history.
-  2. IDENTIFY ALL PROBLEMS: If the user asks multiple questions, handle each.
-  3. CLASSIFY & EXTRACT: For each sub-problem, detect topic, extract parameters (normalize to SI), and identify any provided "options" (A, B, C, D).
-  4. ORCHESTRATE:
-     - Return an array of "sub_problems".
-     - For each, provide a "topic", "summary", "units", "options" (optional), and "constraints".
-  5. OPTION MATCHING:
-     - If "options" are present, the solver will later produce a value. You must ensure the solver knows to compare its final value with these options.
-  6. OUTLIER DETECTION:
-     - Flag unusual values (e.g., density of water != 1000).
-  7. Output ONLY valid JSON in this format:
-     {
-       "summary": "overall summary",
-       "sub_problems": [
-         {
-           "id": "p1",
-           "topic": "algebra|fluids|thermo|...",
-           "summary": "...",
-           "units": [...],
-           "options": [{"label": "A", "val": 10.5}, ...],
-           "raw_query": "..."
-         }
-       ]
-     }
+# ─────────────────────────────────────────────
+# GEMINI IS A ROUTER ONLY — NOT A SOLVER
+# ─────────────────────────────────────────────
+ROUTING_SYSTEM_PROMPT = """
+You are ONLY a classification and routing layer for an engineering backend system.
+
+You must NOT:
+- Solve problems
+- Perform any calculations
+- Choose solving methods
+- Generate final answers
+- Act as a physics, math, or engineering engine
+- Behave like a chatbot or assistant
+
+YOUR ONLY JOB:
+Given a user input (text or image), identify and extract ALL engineering sub-problems present.
+For each sub-problem, produce a routing label and clean structured data for the backend solver.
+
+DOMAIN OPTIONS:
+- algebra
+- calculus
+- mechanics
+- structural
+- fluids
+- thermo
+- unknown
+
+OUTPUT FORMAT — return ONLY this JSON, no explanation, no markdown, no extra text:
+{
+  "summary": "brief overall description of all problems",
+  "sub_problems": [
+    {
+      "id": "p1",
+      "domain": "structural",
+      "problem_type": "simply_supported_beam_udl",
+      "input_summary": "clean restatement of this sub-problem with all given values",
+      "parameters": {
+        "key": "value with unit"
+      },
+      "options": [],
+      "confidence": 0.95
+    }
+  ]
+}
+
+PARAMETER EXTRACTION RULES:
+- Extract ALL numerical values with their units
+- Normalize parameter names (e.g. "length", "load", "velocity", "temperature")
+- If multiple sub-problems exist, split them into separate entries
+- If options (A, B, C, D) are present, extract them into the "options" array as [{"label": "A", "val": ...}]
+- If a value is ambiguous, include it with a note in the parameter name
+
+IMPORTANT:
+- You are a router. The backend handles ALL computation.
+- Never include solution steps, answers, or calculations in your output.
+- confidence is your certainty (0.0–1.0) that you correctly identified the domain and problem type.
 """
 
 
-def convert_history_to_contents(history: list) -> list:
+def convert_history(history: list) -> list:
     """
     Convert frontend history format:
       [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
     into google-genai SDK types.Content objects.
-    Skips entries with empty content. Maps "assistant" -> "model".
+    Skips empty entries. Maps "assistant" -> "model".
     """
     contents = []
     for msg in history:
         role = msg.get("role", "user")
         content = msg.get("content", "").strip()
-
         if not content:
-            continue  # Skip empty assistant placeholders
-
-        # Gemini SDK uses "model" not "assistant"
+            continue
         sdk_role = "model" if role == "assistant" else "user"
-
         contents.append(
             types.Content(
                 role=sdk_role,
@@ -90,40 +115,40 @@ def convert_history_to_contents(history: list) -> list:
     return contents
 
 
-async def extract_parameters(input_data: str, is_image: bool, history: list = None):
+async def route_input(input_data: str, is_image: bool, history: list = None) -> dict:
+    """
+    Calls Gemini ONLY to classify and extract parameters.
+    Gemini does zero computation here.
+    """
     last_error = None
     for model_name in MODELS:
         try:
-            # Build contents list from converted history
-            contents = convert_history_to_contents(history or [])
-
-            prompt = (
-                "Analyze these engineering problems. If multiple exist, separate them. "
-                "If options are provided, extract them clearly."
-            )
+            contents = convert_history(history or [])
 
             if is_image:
                 if "," in input_data:
                     input_data = input_data.split(",")[1]
                 image_bytes = base64.b64decode(input_data)
-                # Final user turn: image + prompt
                 contents.append(
                     types.Content(
                         role="user",
                         parts=[
-                            types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                            types.Part.from_text(text=prompt),
+                            types.Part.from_bytes(
+                                data=image_bytes, mime_type="image/jpeg"
+                            ),
+                            types.Part.from_text(
+                                text="Extract and classify all engineering problems in this image. Return only the routing JSON."
+                            ),
                         ],
                     )
                 )
             else:
-                # Final user turn: text + prompt
                 contents.append(
                     types.Content(
                         role="user",
                         parts=[
                             types.Part.from_text(
-                                text=f"User Input: {input_data}\n\n{prompt}"
+                                text=f"Classify and extract parameters from this input. Return only the routing JSON.\n\nInput: {input_data}"
                             )
                         ],
                     )
@@ -134,27 +159,33 @@ async def extract_parameters(input_data: str, is_image: bool, history: list = No
                 model=model_name,
                 contents=contents,
                 config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
+                    system_instruction=ROUTING_SYSTEM_PROMPT,
+                    temperature=0.1,  # Low temp = deterministic routing
                 ),
             )
 
             text = response.text.replace("```json", "").replace("```", "").strip()
             data = json.loads(text)
             data["_model"] = model_name
+            logger.info(f"Routing result from {model_name}: {json.dumps(data, indent=2)}")
             return data
 
         except json.JSONDecodeError as e:
             logger.error(f"Model {model_name} returned invalid JSON: {e}")
-            last_error = f"Invalid JSON from model: {str(e)}"
+            last_error = f"Router returned invalid JSON: {str(e)}"
             break
         except Exception as e:
-            logger.warning(f"Model {model_name} failed: {e}")
+            logger.warning(f"Model {model_name} failed in router: {e}")
             last_error = str(e)
             if "429" in last_error or "quota" in last_error.lower():
                 continue
             break
 
-    return {"error": last_error or "Extraction failed"}
+    return {"error": last_error or "Routing failed"}
+
+
+def make_event(data: dict) -> str:
+    return f"data: {json.dumps(data)}\n\n"
 
 
 def make_error_event(message: str, problem_id: str = None) -> str:
@@ -164,8 +195,33 @@ def make_error_event(message: str, problem_id: str = None) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-def make_event(data: dict) -> str:
-    return f"data: {json.dumps(data)}\n\n"
+def select_solver(domain: str, problem_type: str):
+    """
+    Pure routing table. Maps domain + problem_type to the correct solver.
+    No Gemini involved. No guessing.
+    """
+    d = domain.lower()
+    pt = problem_type.lower()
+
+    if d in ("algebra",) or any(k in pt for k in ["equation", "algebra", "polynomial", "linear", "quadratic"]):
+        return solve_algebra
+
+    if d in ("calculus",) or any(k in pt for k in ["integral", "derivative", "limit", "calculus", "differential"]):
+        return solve_calculus
+
+    if d in ("mechanics",) or any(k in pt for k in ["kinematics", "dynamics", "motion", "momentum", "projectile", "force", "newton"]):
+        return solve_mechanics
+
+    if d in ("structural",) or any(k in pt for k in ["beam", "truss", "structural", "bending", "shear", "reaction", "moment", "deflection", "udl", "point_load"]):
+        return solve_structural
+
+    if d in ("fluids",) or any(k in pt for k in ["fluid", "flow", "pressure", "bernoulli", "hydro", "pipe", "viscosity", "continuity"]):
+        return solve_fluids
+
+    if d in ("thermo",) or any(k in pt for k in ["heat", "temperature", "entropy", "enthalpy", "thermodynamic", "carnot", "cycle", "conduction", "convection"]):
+        return solve_thermo
+
+    return None
 
 
 @app.post("/solve")
@@ -173,105 +229,106 @@ async def solve(request: Request):
     try:
         raw_data = await request.json()
     except Exception:
-        async def bad_request():
+        async def _bad():
             yield make_error_event("Invalid JSON in request body")
-        return StreamingResponse(bad_request(), media_type="text/event-stream")
+        return StreamingResponse(_bad(), media_type="text/event-stream")
 
-    user_input = raw_data.get("input")
+    user_input = raw_data.get("input", "").strip()
     input_type = raw_data.get("type", "text")
     history = raw_data.get("history", [])
     is_image = input_type == "image"
 
-    if not user_input:
-        async def missing_input():
+    if not user_input and not is_image:
+        async def _missing():
             yield make_error_event("No input provided")
-        return StreamingResponse(missing_input(), media_type="text/event-stream")
+        return StreamingResponse(_missing(), media_type="text/event-stream")
 
     async def event_generator():
+        # ── Step 1: Route via Gemini (classify only) ──
         yield make_event({
             "type": "step",
-            "content": "Studio Kernel: Analyzing input context...",
+            "content": "Studio Kernel: Classifying and extracting parameters...",
         })
 
-        data = await extract_parameters(user_input, is_image, history)
+        routing = await route_input(user_input, is_image, history)
 
-        if "error" in data:
-            yield make_error_event("Extraction Failed: " + data["error"])
+        if "error" in routing:
+            yield make_error_event("Routing Failed: " + routing["error"])
             return
 
-        sub_problems = data.get("sub_problems", [])
-        if not sub_problems and "topic" in data:
-            sub_problems = [data]
+        sub_problems = routing.get("sub_problems", [])
+
+        # Fallback: single-object response
+        if not sub_problems and "domain" in routing:
+            sub_problems = [routing]
 
         if not sub_problems:
-            yield make_error_event("No sub-problems could be extracted from the input")
+            yield make_error_event("Could not extract any problems from the input. Please rephrase.")
             return
 
         yield make_event({
             "type": "meta",
-            "summary": data.get("summary", "Processing multiple queries"),
+            "summary": routing.get("summary", "Processing problems..."),
+            "model": routing.get("_model", "unknown"),
+            "count": len(sub_problems),
         })
 
+        # ── Step 2: Dispatch each sub-problem to the correct solver ──
         for idx, sub in enumerate(sub_problems):
-            topic = sub.get("topic", "unknown").lower()
+            domain = sub.get("domain", "unknown").lower()
+            problem_type = sub.get("problem_type", "unknown").lower()
             problem_id = sub.get("id", f"p{idx}")
+            confidence = sub.get("confidence", 0.0)
 
             yield make_event({
                 "type": "step",
-                "content": f"Solving Sub-problem {idx + 1}: {topic.capitalize()}",
+                "content": f"Dispatching Sub-problem {idx + 1}: [{domain}] {problem_type} (confidence: {confidence:.0%})",
             })
 
-            if "units" in sub:
+            # Pass parameters extracted by Gemini into the sub dict
+            # so solvers can access sub["parameters"] directly
+            if "parameters" not in sub:
+                sub["parameters"] = {}
+
+            # Also keep input_summary accessible as raw_query for solver compatibility
+            sub["raw_query"] = sub.get("input_summary", user_input)
+            sub["topic"] = domain  # backward-compat with solvers that read sub["topic"]
+
+            solver_fn = select_solver(domain, problem_type)
+
+            if not solver_fn:
                 yield make_event({
-                    "type": "units",
-                    "data": sub["units"],
+                    "type": "final",
+                    "answer": f"No solver available for domain '{domain}' / type '{problem_type}'.",
                     "problem_id": problem_id,
                 })
+                continue
 
             try:
-                solver_stream = None
+                async for chunk in solver_fn(sub):
+                    chunk["problem_id"] = problem_id
 
-                if any(t in topic for t in ["calculus", "integral", "derivative", "limit"]):
-                    solver_stream = solve_calculus(sub)
-                elif any(t in topic for t in ["algebra", "math", "equation"]):
-                    solver_stream = solve_algebra(sub)
-                elif any(t in topic for t in ["mechanics", "kinematics", "dynamics", "motion"]):
-                    solver_stream = solve_mechanics(sub)
-                elif any(t in topic for t in ["structural", "beam", "truss", "stress", "strain"]):
-                    solver_stream = solve_structural(sub)
-                elif any(t in topic for t in ["fluids", "fluid", "pressure", "hydro", "flow"]):
-                    solver_stream = solve_fluids(sub)
-                elif any(t in topic for t in ["thermo", "heat", "temperature", "entropy", "enthalpy"]):
-                    solver_stream = solve_thermo(sub)
+                    # Option matching on final chunk
+                    if chunk.get("type") == "final" and sub.get("options"):
+                        ans_text = str(chunk.get("answer", ""))
+                        matched = False
+                        for opt in sub["options"]:
+                            opt_label = str(opt.get("label", "")).lower()
+                            opt_val = str(opt.get("val", ""))
+                            if opt_label in ans_text.lower() or opt_val in ans_text:
+                                chunk["answer"] = ans_text + f"\n\n**Correct Option: {opt['label']}**"
+                                matched = True
+                                break
+                        if not matched:
+                            chunk["answer"] = ans_text + "\n\n**Note: No option matched the computed result.**"
 
-                if solver_stream:
-                    async for chunk in solver_stream:
-                        chunk["problem_id"] = problem_id
-
-                        if chunk.get("type") == "final" and sub.get("options"):
-                            ans_text = str(chunk.get("answer", ""))
-                            matched = False
-                            for opt in sub["options"]:
-                                opt_label = str(opt.get("label", "")).lower()
-                                opt_val = str(opt.get("val", ""))
-                                if opt_label in ans_text.lower() or opt_val in ans_text:
-                                    chunk["answer"] = ans_text + f"\n\n**Correct Option: {opt['label']}**"
-                                    matched = True
-                                    break
-                            if not matched:
-                                chunk["answer"] = ans_text + "\n\n**Note: No corresponding option matches exactly.**"
-
-                        yield make_event(chunk)
-                else:
-                    yield make_event({
-                        "type": "final",
-                        "answer": f"No solver available for topic: {topic}",
-                        "problem_id": problem_id,
-                    })
+                    yield make_event(chunk)
 
             except Exception as e:
-                logger.error(f"Solver error in sub-problem {idx} ({topic}): {e}")
-                yield make_error_event(f"Solver Error ({topic}): {str(e)}", problem_id)
+                logger.error(f"Solver error in sub-problem {idx} ({domain}/{problem_type}): {e}")
+                yield make_error_event(
+                    f"Solver Error [{domain}]: {str(e)}", problem_id
+                )
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
