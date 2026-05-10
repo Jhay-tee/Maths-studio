@@ -2,9 +2,8 @@ fastapi
 uvicorn
 pydantic
 python-multipart
-asyncio
-google-generativeai
 python-dotenv
 numpy
 scipy
 sympy
+google-genai
