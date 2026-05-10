@@ -33,7 +33,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-MODELS = ["gemini-1.5-flash", "gemini-1.5-pro"]
+MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
 
 SYSTEM_INSTRUCTION = """
   You are an "Engineering Parameter Extraction & Solution Orchestrator".
