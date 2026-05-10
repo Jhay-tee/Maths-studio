@@ -2,17 +2,17 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { spawn } from 'child_process';
 import cors from 'cors';
 import morgan from 'morgan';
 import computeRouter from './routes/compute.js';
-import { spawn } from 'child_process';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const app = express();
+const PORT = 3000;
 
 async function startServer() {
-  const app = express();
-  const PORT = 3000;
-
   app.use(cors());
   app.use(morgan('dev'));
   app.use(express.json({ limit: '10mb' }));
@@ -21,11 +21,26 @@ async function startServer() {
   app.use('/api/compute', computeRouter);
 
   // Start Python FastAPI background process
-  // We specify the path to main.py
-  const fastApiProcess = spawn('python3', [path.join(__dirname, '../backend/main.py')]);
-  
-  fastApiProcess.stdout.on('data', (data) => console.log(`[FastAPI]: ${data}`));
-  fastApiProcess.stderr.on('data', (data) => console.error(`[FastAPI Error]: ${data}`));
+  const startPython = (cmd) => {
+    console.log(`Attempting to start Python backend with: ${cmd}`);
+    const proc = spawn(cmd, [path.join(__dirname, '../backend/main.py')], { shell: true });
+    
+    proc.stdout.on('data', (data) => console.log(`[FastAPI]: ${data}`));
+    proc.stderr.on('data', (data) => console.error(`[FastAPI Error]: ${data}`));
+    
+    proc.on('error', (err) => {
+      console.error(`Failed to start Python (${cmd}):`, err);
+      if (cmd === 'python3') startPython('python');
+    });
+
+    proc.on('exit', (code) => {
+      console.log(`Python process (${cmd}) exited with code ${code}`);
+    });
+
+    return proc;
+  };
+
+  let fastApiProcess = startPython('python3');
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {

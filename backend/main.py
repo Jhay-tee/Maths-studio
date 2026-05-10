@@ -1,158 +1,188 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+import os
 import json
 import asyncio
-import os
-from typing import Dict, Any
-from dotenv import load_dotenv
 import google.generativeai as genai
+import base64
+import logging
 
-# Load env vars
-load_dotenv()
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Modular imports
-from solvers.mechanics import solve_beam
-from solvers.math_solver import solve_algebra
-from solvers.structural_solver import solve_structural
+from solvers.algebra import solve_algebra
+from solvers.structural import solve_structural
+from solvers.mechanics import solve_mechanics
+from solvers.calculus import solve_calculus
+from solvers.fluids import solve_fluids
+from solvers.thermodynamics import solve_thermo
 
 app = FastAPI()
 
-# Configure Gemini
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-MODELS = ["gemini-3-flash-preview", "gemini-3.1-pro-preview"]
-
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-
-SYSTEM_PROMPT = """
-  You are an "Engineering Parameter Extraction Engine".
-  Your job is to:
-  1. Read the user's problem (Text or Image).
-  2. Classify the topic (Algebra, Calculus, Mechanics, Structural, etc.).
-  3. Extract parameters into a clean JSON format for a Python solver.
-  4. Handle COMPLEX units:
-     - Detect distributed loads like 'N/mm', 'kN/m', 'lb/ft'.
-     - Detect power-of-ten notation (e.g., '2e6', '10^3', 'x10^5').
-     - Normalize all values to base SI units (Meters, Newtons, Pascals, Kilograms) in 'si_val'.
-  5. INFUSE STANDARD CONSTANTS:
-     - If the problem involves water but no density is given, add {"param": "density_water", "si_val": 1000, "unit": "kg/m3", "type": "constant"}.
-     - If gravity is needed but missing, add {"param": "gravity", "si_val": 9.81, "unit": "m/s2", "type": "constant"}.
-     - If Young's Modulus for Steel is implied/needed but missing, assume 2.0e11 (200GPa).
-     - ONLY add if NOT provided by user.
-  6. BEAM SPECIFIC EXTRACTION:
-     - If topic is 'beam', provide a 'loads' array.
-     - Point load: {"type": "point", "value": magnitude_in_N, "pos": position_in_m}.
-     - Distributed load: {"type": "distributed", "value": magnitude_in_N_per_m, "start": start_m, "end": end_m}.
-  7. Provide a short "summary" string (max 60 chars).
-  8. For EACH parameter, return: {"val": original_numeric, "unit": "raw_unit", "si_val": normalized, "si_unit": "SI", "type": "length|force|distributed_load|constant", "param": "name"}.
-  9. Return a 'units' array containing all extracted parameters.
-
-  STRICT RULES:
-  - NO conversational behavior.
-  - IF input is offensive or unrelated to engineering/math, return {"error": "not_math"}.
-  - Output ONLY valid JSON.
-  - Topic must be lowercase.
-"""
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Adjust this in production to your Vercel URL
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-async def extract_parameters(input_data: str, is_image: bool = False):
-    used_model = MODELS[0]
+# Configure Gemini
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
+MODELS = ["gemini-1.5-flash", "gemini-1.5-pro"]
+
+SYSTEM_INSTRUCTION = """
+  You are an "Engineering Parameter Extraction & Solution Orchestrator".
+  Your job is to:
+  1. Read the user's input (Text/Image) and any provided chat history.
+  2. IDENTIFY ALL PROBLEMS: If the user asks multiple questions, handle each.
+  3. CLASSIFY & EXTRACT: For each sub-problem, detect topic, extract parameters (normalize to SI), and identify any provided "options" (A, B, C, D).
+  4. ORCHESTRATE:
+     - Return an array of "sub_problems".
+     - For each, provide a "topic", "summary", "units", "options" (optional), and "constraints".
+  5. OPTION MATCHING:
+     - If "options" are present, the solver will later produce a value. You must ensure the solver knows to compare its final value with these options.
+  6. OUTLIER DETECTION:
+     - Flag unusual values (e.g., density of water != 1000).
+  7. Output ONLY valid JSON in this format:
+     {
+       "summary": "overall summary",
+       "sub_problems": [
+         {
+           "id": "p1",
+           "topic": "algebra|fluids|thermo|...",
+           "summary": "...",
+           "units": [...],
+           "options": [{"label": "A", "val": 10.5}, ...],
+           "raw_query": "..."
+         }
+       ]
+     }
+"""
+
+async def extract_parameters(input_data: str, is_image: bool, history: list = None):
     last_error = None
-    
     for model_name in MODELS:
         try:
-            model = genai.GenerativeModel(model_name)
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=SYSTEM_INSTRUCTION
+            )
+            
+            contents = []
+            if history:
+                for msg in history:
+                    contents.append(msg) # Standard LangChain/Gemini history format expected
+            
+            prompt = "Analyze these engineering problems. If multiple exist, separate them. If options are provided, extract them clearly."
             
             if is_image:
-                response = await asyncio.to_thread(
-                    model.generate_content,
-                    [
-                        {"mime_type": "image/jpeg", "data": input_data},
-                        SYSTEM_PROMPT + "\n\nExtract engineering parameters from this image."
-                    ]
-                )
+                if "," in input_data:
+                    input_data = input_data.split(",")[1]
+                image_data = base64.b64decode(input_data)
+                contents.append({'mime_type': 'image/jpeg', 'data': image_data})
+                contents.append(prompt)
             else:
-                response = await asyncio.to_thread(
-                    model.generate_content, 
-                    SYSTEM_PROMPT + "\n\nUser Problem: " + input_data
-                )
+                contents.append(f"User Input: {input_data}\n\n{prompt}")
                 
+            response = await asyncio.to_thread(model.generate_content, contents)
+            
             text = response.text.replace('```json', '').replace('```', '').strip()
             data = json.loads(text)
-            data["_model_used"] = model_name
-            data["_is_fallback"] = model_name != MODELS[0]
+            data["_model"] = model_name
             return data
-            
         except Exception as e:
+            logger.warning(f"Model {model_name} failed: {e}")
             last_error = str(e)
             if "429" in last_error or "quota" in last_error.lower():
                 continue
             break
             
-    return {"error": "extraction_failed", "message": f"AI Engine Exception: {last_error}"}
-
-async def result_generator(raw_data: Dict[str, Any]):
-    user_input = raw_data.get("input")
-    is_image = raw_data.get("type") == "image"
-    
-    yield f"data: {json.dumps({'type': 'step', 'content': 'Reading input and identifying mathematical context...'})}\n\n"
-    
-    if is_image:
-        yield f"data: {json.dumps({'type': 'step', 'content': 'AI Vision: Scanning diagram for engineering constraints...'})}\n\n"
-    
-    # 1. Extraction step (Skip if frontend already provided extracted data)
-    if "topic" in raw_data and "units" in raw_data:
-        data = raw_data
-        yield f"data: {json.dumps({'type': 'step', 'content': 'Using pre-extracted parameters...'})}\n\n"
-    else:
-        data = await extract_parameters(user_input, is_image)
-    
-    if "error" in data:
-        msg = "This is not a valid mathematics or engineering problem." if data["error"] == "not_math" else "Unsupported topic or extraction error."
-        yield f"data: {json.dumps({'type': 'step', 'content': f'Error: {msg}'})}\n\n"
-        yield f"data: {json.dumps({'type': 'final', 'answer': 'Analysis halted.'})}\n\n"
-        return
-
-    topic = data.get("topic", "").lower()
-    summary = data.get("summary", f"identified as {topic}")
-    
-    # Send metadata for frontend history
-    yield f"data: {json.dumps({'type': 'meta', 'topic': topic, 'summary': summary, 'is_fallback': data.get('_is_fallback', False), 'model': data.get('_model_used')})}\n\n"
-
-    # Send unit conversions info if available
-    if "units" in data:
-        yield f"data: {json.dumps({'type': 'units', 'data': data['units']})}\n\n"
-    
-    yield f"data: {json.dumps({'type': 'step', 'content': f'Domain: {topic.capitalize()} | Observation: {summary}'})}\n\n"
-    
-    if "structural" in topic:
-        async for chunk in solve_structural(data):
-            yield f"data: {json.dumps(chunk)}\n\n"
-    elif "beam" in topic or "mechanics" in topic:
-        async for chunk in solve_beam(data):
-            yield f"data: {json.dumps(chunk)}\n\n"
-    elif "algebra" in topic:
-        async for chunk in solve_algebra(data):
-            yield f"data: {json.dumps(chunk)}\n\n"
-    else:
-        yield f"data: {json.dumps({'type': 'step', 'content': 'Processing computation with general numerical kernel...'})}\n\n"
-        await asyncio.sleep(0.5)
-        yield f"data: {json.dumps({'type': 'final', 'answer': f'Computed successfully for {topic}. (Results would differ with specific domain solver)'})}\n\n"
+    return {"error": last_error or "Extraction failed"}
 
 @app.post("/solve")
 async def solve(request: Request):
     raw_data = await request.json()
-    return StreamingResponse(result_generator(raw_data), media_type="text/event-stream")
+    user_input = raw_data.get("input")
+    input_type = raw_data.get("type", "text")
+    history = raw_data.get("history", [])
+    is_image = input_type == "image"
+    
+    async def event_generator():
+        yield f"data: {json.dumps({'type': 'step', 'content': 'Studio Kernel: Analyzing input context...'})}\n\n"
+        
+        # 1. Extraction Phase
+        data = await extract_parameters(user_input, is_image, history)
+        
+        if "error" in data:
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Extraction Failed: {data['error']}'})}\n\n"
+            return
+
+        sub_problems = data.get("sub_problems", [])
+        if not sub_problems and "topic" in data:
+            # Migration path for older schema if Gemini returns single object
+            sub_problems = [data]
+
+        yield f"data: {json.dumps({'type': 'meta', 'summary': data.get('summary', 'Processing multiple queries')})}\n\n"
+        
+        # 2. Solving Phase iterate through all sub problems
+        for idx, sub in enumerate(sub_problems):
+            topic = sub.get("topic", "unknown").lower()
+            problem_id = sub.get("id", f"p{idx}")
+            
+            yield f"data: {json.dumps({'type': 'step', 'content': f'Solving Sub-problem {idx + 1}: {topic.capitalize()}'})}\n\n"
+            
+            if "units" in sub:
+                yield f"data: {json.dumps({'type': 'units', 'data': sub['units'], 'problem_id': problem_id})}\n\n"
+
+            try:
+                solver_stream = None
+                if any(t in topic for t in ["calculus", "integral", "derivative", "limit"]):
+                    solver_stream = solve_calculus(sub)
+                elif any(t in topic for t in ["algebra", "math", "equation"]):
+                    solver_stream = solve_algebra(sub)
+                elif any(t in topic for t in ["mechanics", "kinematics", "dynamics", "motion"]):
+                    solver_stream = solve_mechanics(sub)
+                elif any(t in topic for t in ["structural", "beam", "truss", "stress", "strain"]):
+                    solver_stream = solve_structural(sub)
+                elif any(t in topic for t in ["fluids", "fluid", "pressure", "hydro", "flow"]):
+                    solver_stream = solve_fluids(sub)
+                elif any(t in topic for t in ["thermo", "heat", "temperature", "entropy", "enthalpy"]):
+                    solver_stream = solve_thermo(sub)
+
+                if solver_stream:
+                    async for chunk in solver_stream:
+                        # Append metadata about which problem this chunk belongs to
+                        chunk["problem_id"] = problem_id
+                        
+                        # Handle Option Matching at final step if options exist
+                        if chunk["type"] == "final" and sub.get("options"):
+                            ans_text = chunk["answer"]
+                            options = sub["options"]
+                            # Simple heuristic for option matching
+                            # In a production app, we'd use Gemini again or more robust regex
+                            matched = False
+                            for opt in options:
+                                if str(opt.get("label")).lower() in ans_text.lower() or str(opt.get("val")) in ans_text:
+                                    chunk["answer"] += f"\n\n**Correct Option: {opt['label']}**"
+                                    matched = True
+                                    break
+                            if not matched:
+                                chunk["answer"] += f"\n\n**Note: No corresponding option matches exactly.**"
+
+                        yield f"data: {json.dumps(chunk)}\n\n"
+                else:
+                    yield f"data: {json.dumps({'type': 'final', 'answer': f'Computed generic results for {topic}.', 'problem_id': problem_id})}\n\n"
+            except Exception as e:
+                logger.error(f"Solver error in sub-problem {idx}: {e}")
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Solver Error ({topic}): {str(e)}', 'problem_id': problem_id})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=9999)

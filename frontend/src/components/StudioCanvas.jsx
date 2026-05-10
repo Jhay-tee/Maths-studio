@@ -51,6 +51,8 @@ const StudioCanvas = ({ type, data, width = 600, height = 300 }) => {
       else if (type.includes('bending') || type.includes('moment')) ctx.strokeStyle = '#60a5fa'; // Blue
       else if (type.includes('axial') || type.includes('force')) ctx.strokeStyle = '#fb923c'; // Orange
       else if (type.includes('stress')) ctx.strokeStyle = '#f87171'; // Red
+      else if (type.includes('pressure')) ctx.strokeStyle = '#a78bfa'; // Purple
+      else if (type.includes('pv_diagram')) ctx.strokeStyle = '#f472b6'; // Pink
       else ctx.strokeStyle = '#ffffff';
 
       data.forEach((point, i) => {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Ruler, Zap, Hash, Repeat } from 'lucide-react';
+import { Ruler, Zap, Hash, Repeat, AlertTriangle } from 'lucide-react';
 
 const CONVERSIONS = {
   force: (val) => [
@@ -82,9 +82,17 @@ export default function UnitLens({ units }) {
           return (
             <div key={i} className="space-y-2 border-b border-white/5 pb-4 last:border-0 last:pb-0">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest">
-                  Extracted: <span className="text-white font-bold">{u.param || 'Value'}: {u.val}{u.unit}</span>
-                </span>
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest">
+                    Extracted: <span className="text-white font-bold">{u.param || 'Value'}: {u.val}{u.unit}</span>
+                  </span>
+                  {u.warning && (
+                    <div className="flex items-center gap-1 mt-1 text-amber-500">
+                      <AlertTriangle className="w-3 h-3" />
+                      <span className="text-[9px] font-bold uppercase tracking-tight">{u.warning}</span>
+                    </div>
+                  )}
+                </div>
                 <span className="text-[9px] font-black uppercase text-blue-400/60 tracking-tighter bg-blue-400/5 px-1.5 py-0.5 rounded">{type}</span>
               </div>
               
