@@ -11,7 +11,7 @@ export default function MessageBubble({ msg, onDelete }) {
   const longPressProps = useLongPress(() => {
     if (window.navigator.vibrate) window.navigator.vibrate(50);
     setShowOptions(true);
-  }, () => {}, { delay: 1000 });
+  }, () => {}, { delay: 3000 });
 
   const handleCopy = (e) => {
     e.stopPropagation();

@@ -7,7 +7,14 @@ import {
   Book
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { saveComputation, getHistory, deleteHistoryItem } from './lib/db';
+import { 
+  saveComputation, 
+  getHistory, 
+  deleteHistoryItem,
+  saveCurrentSession,
+  loadCurrentSession,
+  clearCurrentSession
+} from './lib/db';
 
 // Modular Components (Eager Load)
 import HistorySidebar from './components/HistorySidebar';
@@ -33,6 +40,7 @@ export default function App() {
 
   useEffect(() => {
     loadHistory();
+    loadSession();
     const handleStatus = () => setOnline(navigator.onLine);
     window.addEventListener('online', handleStatus);
     window.addEventListener('offline', handleStatus);
@@ -46,7 +54,18 @@ export default function App() {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
+    // Save current session whenever messages change
+    if (messages.length > 0) {
+      saveCurrentSession(messages);
+    }
   }, [messages]);
+
+  const loadSession = async () => {
+    const saved = await loadCurrentSession();
+    if (saved && Array.isArray(saved)) {
+      setMessages(saved);
+    }
+  };
 
   const loadHistory = async () => {
     const data = await getHistory();
@@ -158,7 +177,21 @@ export default function App() {
         });
       }
 
-      setMessages(prev => prev.map(m => m.id === assistantMessage.id ? { ...m, isProcessing: false } : m));
+      setMessages(prev => {
+        const finalMessages = prev.map(m => m.id === assistantMessage.id ? { ...m, isProcessing: false } : m);
+        const finalAssistant = finalMessages.find(m => m.id === assistantMessage.id);
+        if (finalAssistant) {
+          saveComputation({
+            type: 'Computation',
+            input: currentInput,
+            result: finalAssistant.final,
+            steps: finalAssistant.steps,
+            image: currentImage,
+            timestamp: Date.now()
+          }).then(() => loadHistory());
+        }
+        return finalMessages;
+      });
 
     } catch (error) {
       if (error.name === 'AbortError') return;
@@ -172,9 +205,10 @@ export default function App() {
     setMessages(prev => prev.filter(m => String(m.id) !== String(id)));
   };
 
-  const clearChat = () => {
+  const clearChat = async () => {
     if (window.confirm('Delete this session?')) {
       setMessages([]);
+      await clearCurrentSession();
     }
   };
 

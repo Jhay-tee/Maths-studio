@@ -2,13 +2,19 @@ import { openDB } from 'idb';
 
 const DB_NAME = 'MathStudioDB';
 const STORE_NAME = 'computations';
+const SESSION_STORE = 'current_session';
 
 export const initDB = async () => {
-  return openDB(DB_NAME, 1, {
-    upgrade(db) {
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
+  return openDB(DB_NAME, 2, {
+    upgrade(db, oldVersion) {
+      if (oldVersion < 1) {
         const store = db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
         store.createIndex('timestamp', 'timestamp');
+      }
+      if (oldVersion < 2) {
+        if (!db.objectStoreNames.contains(SESSION_STORE)) {
+          db.createObjectStore(SESSION_STORE);
+        }
       }
     },
   });
@@ -30,4 +36,19 @@ export const getHistory = async () => {
 export const deleteHistoryItem = async (id) => {
   const db = await initDB();
   return db.delete(STORE_NAME, id);
+};
+
+export const saveCurrentSession = async (messages) => {
+  const db = await initDB();
+  return db.put(SESSION_STORE, messages, 'messages');
+};
+
+export const loadCurrentSession = async () => {
+  const db = await initDB();
+  return db.get(SESSION_STORE, 'messages');
+};
+
+export const clearCurrentSession = async () => {
+  const db = await initDB();
+  return db.delete(SESSION_STORE, 'messages');
 };
