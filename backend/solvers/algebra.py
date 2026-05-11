@@ -1,5 +1,6 @@
 import asyncio
 import sympy as sp
+import re
 
 async def solve_algebra(data):
     yield {"type": "step", "content": "Initializing Algebra Engine..."}
@@ -14,6 +15,14 @@ async def solve_algebra(data):
     yield {"type": "step", "content": f"Parsing expression(s): {expr_str}"}
     
     try:
+        # Detect all alphabetical variables, preserving case
+        all_potential = set(re.findall(r'[a-zA-Z]', expr_str))
+        # Exclude common single-letter constants if they are alone (e, i, d)
+        # But for algebra, we usually want to keep them.
+        vars_to_use = sorted(list(all_potential))
+        
+        symbols = {v: sp.Symbol(v) for v in vars_to_use}
+        
         # Check for multiple equations (simultaneous)
         # Often separated by comma, semicolon, or newline
         delimiters = [",", ";", "\n"]
@@ -67,6 +76,9 @@ async def solve_algebra(data):
                 return
             except Exception as me:
                 yield {"type": "step", "content": f"Matrix parsing failed: {str(me)}. Falling back to expression solving."}
+        
+        # Determine if we have multiple equations or a single one
+        if len(equations_raw) > 1:
             yield {"type": "step", "content": f"Detected {len(equations_raw)} simultaneous equations."}
             eqs = []
             for eq_text in equations_raw:
@@ -115,7 +127,7 @@ async def solve_algebra(data):
                 equation = sp.Eq(sp.sympify(eq_text.strip(), locals=symbols), 0)
             
             # Target variable
-            target_var = symbols[potential_vars[0]] if potential_vars else sp.Symbol('x')
+            target_var = symbols[vars_to_use[0]] if vars_to_use else sp.Symbol('x')
             yield {"type": "step", "content": f"Solving for {target_var}..."}
             
             solutions = sp.solve(equation, target_var)

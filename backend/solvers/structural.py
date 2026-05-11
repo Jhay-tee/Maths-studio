@@ -1,6 +1,6 @@
 import asyncio
 import numpy as np
-from sympy import symbols, latex
+import sympy as sp
 import logging
 
 logger = logging.getLogger(__name__)
@@ -197,7 +197,6 @@ async def solve_fem_frame(params):
 
 async def solve_virtual_work(params):
     yield {"type": "step", "content": "Calculating Virtual Work Integral..."}
-    import sympy as sp
     x = sp.Symbol('x')
     L = float(params.get("L", 5))
     E = float(params.get("E", 200e9))
@@ -223,7 +222,6 @@ async def solve_virtual_work(params):
 
 async def solve_moment_area(params):
     yield {"type": "step", "content": "Initializing Moment-Area Analysis..."}
-    import sympy as sp
     x = sp.Symbol('x')
     
     L = float(params.get("L", 5))

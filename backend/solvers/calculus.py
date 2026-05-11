@@ -13,13 +13,16 @@ async def solve_calculus(data):
         return
 
     try:
-        # Detect all alphabetical variables
-        potential_vars = sorted(list(set([c for c in expr_str.lower() if c.isalpha() and c not in ('d', 'i', 'e', 'w')])))
-        if not potential_vars:
-            potential_vars = ["x"]
+        # Detect all alphabetical variables, preserving case
+        import re
+        all_potential = set(re.findall(r'[a-zA-Z]', expr_str))
+        # For calculus, we often use x, t, or user defined vars
+        vars_to_use = sorted(list(all_potential))
+        if not vars_to_use:
+            vars_to_use = ["x"]
         
-        symbols = {v: sp.Symbol(v) for v in potential_vars}
-        vars_list = [symbols[v] for v in potential_vars]
+        symbols = {v: sp.Symbol(v) for v in vars_to_use}
+        vars_list = [symbols[v] for v in vars_to_use]
         primary_var = vars_list[0]
 
         steps = [f"### Advanced Calculus Analysis"]
@@ -67,7 +70,7 @@ async def solve_calculus(data):
             grad_latex = "\\begin{bmatrix} " + " \\\\ ".join([sp.latex(g) for g in grad]) + " \\end{bmatrix}"
             steps.extend([
                 f"**Operation:** Gradient Vector Field",
-                f"**Scalar Function:** $f({', '.join(potential_vars)}) = {sp.latex(expr)}$",
+                f"**Scalar Function:** $f({', '.join(vars_to_use)}) = {sp.latex(expr)}$",
                 f"**Result:** $\\nabla f = {grad_latex}$"
             ])
 
