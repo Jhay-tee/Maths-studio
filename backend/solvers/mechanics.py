@@ -1,6 +1,7 @@
 import asyncio
 import numpy as np
 import sympy as sp
+from solvers.constants import G, PI
 
 async def solve_mechanics(data):
     yield {"type": "step", "content": "Initializing Classical Mechanics Kernel..."}
@@ -34,10 +35,10 @@ async def solve_mechanics(data):
 
 async def solve_projectile(params):
     yield {"type": "step", "content": "Analyzing Projectile Trajectory..."}
-    
+
     v0 = float(params.get("v0", params.get("velocity", 0)))
     theta_deg = float(params.get("theta", params.get("angle", 0)))
-    g = 9.81
+    g = float(params.get("g", G))
     
     if v0 <= 0:
         yield {"type": "final", "answer": "Error: Initial velocity must be greater than zero."}

@@ -1,5 +1,6 @@
 import asyncio
 import numpy as np
+from solvers.constants import WATER_DENSITY, G, ATM_PRESSURE
 
 async def solve_fluids(data):
     yield {"type": "step", "content": "Initializing Fluid Dynamics Kernel..."}
@@ -68,7 +69,7 @@ async def solve_continuity(params):
 async def solve_flow_meter(params):
     yield {"type": "step", "content": "Analyzing Flow Meter (Venturi/Orifice)..."}
     # Formula: Q = Cd * A2 * sqrt(2*dP / (rho * (1 - beta^4)))
-    rho = float(params.get("rho", 1000))
+    rho = float(params.get("rho", WATER_DENSITY))
     d1 = float(params.get("d1", 0.1))
     d2 = float(params.get("d2", 0.05))
     dp = float(params.get("dp", 1000)) # Pressure drop
@@ -94,8 +95,8 @@ async def solve_flow_meter(params):
 async def solve_hydrostatics(params):
     yield {"type": "step", "content": "Calculating Hydrostatic Pressure..."}
     h = float(params.get("h", 1))
-    rho = float(params.get("rho", 1000))
-    g = 9.81
+    rho = float(params.get("rho", WATER_DENSITY))
+    g = float(params.get("g", G))
     
     p_gauge = rho * g * h
     

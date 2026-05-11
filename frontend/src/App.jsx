@@ -22,6 +22,7 @@ import MessageBubble from './components/MessageBubble';
 import ChatInput from './components/ChatInput';
 import SessionView from './components/SessionView';
 import DocsPage from './components/DocsPage';
+import ParameterDialog from './components/ParameterDialog';
 
 export default function App() {
   const [messages, setMessages] = useState([]);
@@ -34,6 +35,9 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [showDocs, setShowDocs] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
+  const [showParamDialog, setShowParamDialog] = useState(false);
+  const [missingParams, setMissingParams] = useState([]);
+  const [pendingCompute, setPendingCompute] = useState(null);
   const abortControllerRef = useRef(null);
   const scrollRef = useRef(null);
   const fileInputRef = useRef(null);
