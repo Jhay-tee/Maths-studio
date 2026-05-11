@@ -128,10 +128,9 @@ async def solve_bernoulli(params):
 
 async def solve_pipe_flow(params):
     yield {"type": "step", "content": "Calculating Reynolds Number..."}
-    # (Same as before but refined)
     v = float(params.get("v", 1))
     d = float(params.get("d", 0.1))
-    rho = float(params.get("rho", 1000))
+    rho = float(params.get("rho", WATER_DENSITY))
     mu = float(params.get("mu", 0.001))
     re = (rho * v * d) / mu
     regime = "Laminar" if re < 2300 else "Turbulent" if re > 4000 else "Transitional"
@@ -143,7 +142,7 @@ async def solve_head_loss(params):
     d = float(params.get("d", 0.1)) # diameter
     v = float(params.get("v", 2))   # velocity
     f = float(params.get("f", 0.02)) # friction factor
-    g = 9.81
+    g = float(params.get("g", G))
     
     # Darcy-Weisbach: hf = f * (L/D) * (v^2 / (2g))
     hf = f * (l / d) * (v**2 / (2 * g))

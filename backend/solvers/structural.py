@@ -1,6 +1,7 @@
 import numpy as np
 import sympy as sp
 import asyncio
+from solvers.constants import STEEL_YOUNGS_MODULUS, STEEL_DENSITY, G
 
 async def solve_structural(sub: dict):
     params = sub.get("parameters", {})
