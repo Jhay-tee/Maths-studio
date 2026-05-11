@@ -1,5 +1,6 @@
 import React, { useRef, useEffect } from 'react';
-import { Download, Table, Image as ImageIcon, FileText, Activity } from 'lucide-react';
+import { Download, Table, Image as ImageIcon, FileText, Activity, Maximize2, Minimize2, RefreshCw } from 'lucide-react';
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import DataTable from './DataTable';
 
 const StudioCanvas = ({ type, data, width = 600, height = 300 }) => {
@@ -124,23 +125,57 @@ const StudioCanvas = ({ type, data, width = 600, height = 300 }) => {
     return (
       <div className="space-y-4">
         <div className="bg-[#1a1a1a] border border-white/5 rounded-[24px] overflow-hidden shadow-2xl group relative">
-          <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-            <button 
-              onClick={() => downloadDataUrl(data.image, 'plot.png')}
-              className="p-2 bg-black/60 rounded-xl hover:bg-white hover:text-black transition-all"
-              title="Download PNG"
-            >
-              <ImageIcon className="w-4 h-4" />
-            </button>
-            <button 
-              onClick={() => downloadDataUrl(data.svg, 'plot.svg')}
-              className="p-2 bg-black/60 rounded-xl hover:bg-white hover:text-black transition-all"
-              title="Download SVG"
-            >
-              <Download className="w-4 h-4" />
-            </button>
-          </div>
-          <img src={data.image} alt={data.caption} className="w-full h-auto" />
+          <TransformWrapper
+            initialScale={1}
+            initialPositionX={0}
+            initialPositionY={0}
+            centerOnInit
+          >
+            {({ zoomIn, zoomOut, resetTransform }) => (
+              <>
+                <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                  <button 
+                    onClick={() => zoomIn()}
+                    className="p-2 bg-black/60 rounded-xl hover:bg-white hover:text-black transition-all"
+                    title="Zoom In"
+                  >
+                    <Maximize2 className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={() => zoomOut()}
+                    className="p-2 bg-black/60 rounded-xl hover:bg-white hover:text-black transition-all"
+                    title="Zoom Out"
+                  >
+                    <Minimize2 className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={() => resetTransform()}
+                    className="p-2 bg-black/60 rounded-xl hover:bg-white hover:text-black transition-all"
+                    title="Reset"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={() => downloadDataUrl(data.image, 'plot.png')}
+                    className="p-2 bg-black/60 rounded-xl hover:bg-white hover:text-black transition-all"
+                    title="Download PNG"
+                  >
+                    <ImageIcon className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={() => downloadDataUrl(data.svg, 'plot.svg')}
+                    className="p-2 bg-black/60 rounded-xl hover:bg-white hover:text-black transition-all"
+                    title="Download SVG"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                </div>
+                <TransformComponent wrapperClass="!w-full !h-auto">
+                  <img src={data.image} alt={data.caption} className="w-full h-auto cursor-grab active:cursor-grabbing" />
+                </TransformComponent>
+              </>
+            )}
+          </TransformWrapper>
           
           <div className="p-4 bg-white/5 border-t border-white/5 flex items-center justify-between">
             <div className="flex items-center gap-2 text-[10px] uppercase font-bold tracking-widest text-white/30">
@@ -170,28 +205,74 @@ const StudioCanvas = ({ type, data, width = 600, height = 300 }) => {
   }
 
   return (
-    <div className="bg-[#0b0b0b] p-4 border border-white/10 rounded-lg overflow-hidden my-4 shadow-2xl relative group">
-      <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button 
-          onClick={() => {
-            const canvas = canvasRef.current;
-            const link = document.createElement('a');
-            link.download = `${type}.png`;
-            link.href = canvas.toDataURL();
-            link.click();
-          }}
-          className="p-2 bg-white text-black rounded-lg hover:scale-105 transition-all"
+    <div className="space-y-4">
+      <div className="bg-[#0b0b0b] p-4 border border-white/10 rounded-[24px] overflow-hidden shadow-2xl relative group">
+        <TransformWrapper
+          initialScale={1}
+          initialPositionX={0}
+          initialPositionY={0}
+          centerOnInit
         >
-          <Download className="w-4 h-4" />
-        </button>
+          {({ zoomIn, zoomOut, resetTransform }) => (
+            <>
+              <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                <button 
+                  onClick={() => zoomIn()}
+                  className="p-1.5 bg-white text-black rounded-lg hover:scale-110 transition-all shadow-lg"
+                  title="Zoom In"
+                >
+                  <Maximize2 className="w-3.5 h-3.5" />
+                </button>
+                <button 
+                  onClick={() => zoomOut()}
+                  className="p-1.5 bg-white text-black rounded-lg hover:scale-110 transition-all shadow-lg"
+                  title="Zoom Out"
+                >
+                  <Minimize2 className="w-3.5 h-3.5" />
+                </button>
+                <button 
+                  onClick={() => resetTransform()}
+                  className="p-1.5 bg-white text-black rounded-lg hover:scale-110 transition-all shadow-lg"
+                  title="Reset"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+                <button 
+                  onClick={() => {
+                    const canvas = canvasRef.current;
+                    const link = document.createElement('a');
+                    link.download = `${type}.png`;
+                    link.href = canvas.toDataURL();
+                    link.click();
+                  }}
+                  className="p-1.5 bg-white text-black rounded-lg hover:scale-110 transition-all shadow-lg"
+                  title="Download PNG"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <TransformComponent wrapperClass="!w-full !h-auto">
+                <canvas 
+                  ref={canvasRef} 
+                  width={width} 
+                  height={height} 
+                  className="w-full h-auto cursor-grab active:cursor-grabbing"
+                  id={`canvas-${type}`}
+                />
+              </TransformComponent>
+            </>
+          )}
+        </TransformWrapper>
       </div>
-      <canvas 
-        ref={canvasRef} 
-        width={width} 
-        height={height} 
-        className="w-full h-auto"
-        id={`canvas-${type}`}
-      />
+
+      {Array.isArray(data) && data.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 px-1 text-[10px] font-black uppercase tracking-widest text-white/20">
+            <Table className="w-3.5 h-3.5" /> Data Distribution (Interactive)
+          </div>
+          <DataTable data={data} columns={['x', 'y']} />
+        </div>
+      )}
     </div>
   );
 };

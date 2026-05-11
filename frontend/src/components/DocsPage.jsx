@@ -75,6 +75,10 @@ export default function DocsPage({ onClose }) {
               description="Nodal analysis for 2D trusses and Euler-Bernoulli frames with real-time stress and displacement calculation."
             />
             <FeatureCard 
+              title="Dynamics & Kinematics"
+              description="One-dimensional motion solver (SUVAT), projectile kinematics, and Newton's Second Law analysis."
+            />
+            <FeatureCard 
               title="Vibration Kernel"
               description="SHM characteristics: Natural frequency, damping ratios, and period analysis for mechanical oscillators."
             />

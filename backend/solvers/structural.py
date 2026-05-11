@@ -276,40 +276,85 @@ async def solve_mohrs_circle(params):
     yield {"type": "final", "answer": "\n".join(steps)}
 
 async def solve_beam(params, raw):
-    yield {"type": "step", "content": "Analyzing Beam Deflection and Stress..."}
+    yield {"type": "step", "content": "Analyzing Beam Deflection, Shear, and Bending Moments..."}
     l = float(params.get("l", 5)) # Length
     e = float(params.get("e", 200e9)) # Modulus (Steel)
     i = float(params.get("i", 1e-4)) # Inertia
     p = float(params.get("p", 1000)) # Point Load
     w = float(params.get("w", 0))    # Distributed Load
     
+    steps = [f"### Euler-Bernoulli Beam Analysis"]
+    
+    points = [0, l/4, l/2, 3*l/4, l]
+    moment_values = []
+    shear_values = []
+    
     # Simple Cases
     if "cantilever" in raw:
+        support = "Cantilever (Fixed-Free)"
         if w > 0:
             delta_max = (w * l**4) / (8 * e * i)
             m_max = (w * l**2) / 2
+            v_max = w * l
+            # Equations: x=0 is fixed, x=l is free
+            for x in points:
+                # M(x) = -w(L-x)^2 / 2
+                moment_values.append(-w * (l-x)**2 / 2)
+                # V(x) = w(L-x)
+                shear_values.append(w * (l-x))
+            steps.append(f"**Load:** Distributed load $w = {w}$ N/m")
         else:
             delta_max = (p * l**3) / (3 * e * i)
             m_max = p * l
-        support = "Cantilever"
+            v_max = p
+            for x in points:
+                # M(x) = -P(L-x)
+                moment_values.append(-p * (l-x))
+                shear_values.append(p)
+            steps.append(f"**Load:** Point load $P = {p}$ N at end")
     else: # Simply Supported
+        support = "Simply Supported (Pin-Roller)"
         if w > 0:
             delta_max = (5 * w * l**4) / (384 * e * i)
             m_max = (w * l**2) / 8
+            v_max = (w * l) / 2
+            for x in points:
+                # M(x) = (wLx - wx^2)/2
+                moment_values.append((w*l*x - w*x**2)/2)
+                # V(x) = w(L/2 - x)
+                shear_values.append(w*(l/2 - x))
+            steps.append(f"**Load:** Uniformly Distributed Load $w = {w}$ N/m")
         else:
             delta_max = (p * l**3) / (48 * e * i)
             m_max = (p * l) / 4
-        support = "Simply Supported"
+            v_max = p / 2
+            for x in points:
+                # M(x) for x <= L/2 = Px/2
+                # M(x) for x > L/2 = P(L-x)/2
+                m_x = (p * x / 2) if x <= l/2 else (p * (l-x) / 2)
+                moment_values.append(m_x)
+                # V(x) = P/2 for x < L/2, -P/2 for x > L/2
+                v_x = p/2 if x < l/2 else (-p/2 if x > l/2 else 0)
+                shear_values.append(v_x)
+            steps.append(f"**Load:** Concentrated load $P = {p}$ N at midspan")
         
-    steps = [
-        f"### Euler-Bernoulli Beam Analysis ({support})",
-        f"- Length ($L$): {l} m",
-        f"- Elasticity ($E$): {e/1e9:.1f} GPa",
-        f"- Inertia ($I$): {i:.2e} m$^4$",
-        "#### Summary of Extrema",
-        f"- **Max Deflection ($\\delta_{{max}}$):** {delta_max*1000:.3f} mm",
-        f"- **Max Bending Moment ($M_{{max}}$):** {m_max/1000:.2f} kNm"
-    ]
+    steps.extend([
+        f"**Configuration:** {support}",
+        f"**Geometric Info:** $L={l}$m, $E={e/1e9:.1f}$GPa, $I={i:.2e}$m$^4$",
+        "#### Summary of Calculated Extrema",
+        f"- **Max Deflection ($\\delta_{{max}}$):** {delta_max*1000:.4f} mm",
+        f"- **Max Bending Moment ($M_{{max}}$):** {m_max/1000:.2f} kNm",
+        f"- **Max Shear Force ($V_{{max}}$):** {v_max/1000:.2f} kN",
+        "#### Discretized Internal Forces",
+        "| Position (x/L) | Moment (kNm) | Shear (kN) |",
+        "|---|---|---|",
+    ])
+    
+    for i_pt, x in enumerate(points):
+        x_label = ["0", "L/4", "L/2", "3L/4", "L"][i_pt]
+        steps.append(f"| {x_label} | {moment_values[i_pt]/1000:.2f} | {shear_values[i_pt]/1000:.2f} |")
+        
+    steps.append("\n*Note: Use the diagram visualization for detailed curves.*")
     yield {"type": "final", "answer": "\n".join(steps)}
 
 async def solve_section_properties(params):

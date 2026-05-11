@@ -8,7 +8,10 @@ async def solve_physics(data):
     raw = data.get("raw_query", "").lower()
     
     try:
-        if "snell" in raw or "refraction" in raw or "optical" in raw:
+        if "motion" in raw or "kinematics" in raw or "vel" in raw or "accel" in raw:
+            async for chunk in solve_kinematics(params):
+                yield chunk
+        elif "snell" in raw or "refraction" in raw or "optical" in raw:
             async for chunk in solve_optics(params):
                 yield chunk
         elif "wave" in raw or "frequency" in raw or "lambda" in raw:
@@ -77,4 +80,34 @@ async def solve_doppler(params):
         f"- Medium Speed ($v$): {v} m/s",
         f"**Observed Frequency ($f_o$):** {f_obs:.2f} Hz"
     ]
+    yield {"type": "final", "answer": "\n".join(steps)}
+
+async def solve_kinematics(params):
+    yield {"type": "step", "content": "Applying Kinematic Equations (SUVAT)..."}
+    # v = u + at, s = ut + 0.5at^2, v^2 = u^2 + 2as
+    u = float(params.get("u", params.get("vi", 0))) # initial velocity
+    v = float(params.get("v", params.get("vf", 0))) # final velocity
+    a = float(params.get("a", 0))                   # acceleration
+    t = float(params.get("t", 0))                   # time
+    s = float(params.get("s", params.get("d", 0)))  # displacement
+    
+    steps = ["### Kinematics: 1D Motion Analysis"]
+    
+    # Simple logic to find the missing variable if enough are present
+    if u and a and t and not s:
+        s_calc = u*t + 0.5*a*t**2
+        steps.append(f"- Calculated Displacement ($s = ut + \\frac{1}{2}at^2$): {s_calc:.2f} m")
+    elif u and v and t and not s:
+        s_calc = (u+v)/2 * t
+        steps.append(f"- Calculated Displacement ($s = \\frac{u+v}{2}t$): {s_calc:.2f} m")
+    elif u and a and s and not v:
+        v_calc = np.sqrt(u**2 + 2*a*s)
+        steps.append(f"- Calculated Final Velocity ($v = \\sqrt{u^2 + 2as}$): {v_calc:.2f} m/s")
+    elif v and a and t and not u:
+        u_calc = v - a*t
+        steps.append(f"- Calculated Initial Velocity ($u = v - at$): {u_calc:.2f} m/s")
+    else:
+        steps.append(f"**State:** $u={u}$m/s, $v={v}$m/s, $a={a}$m/s$^2$, $t={t}$s, $s={s}$m")
+        steps.append("Provide 3 parameters to solve for the remaining kinematic variables.")
+    
     yield {"type": "final", "answer": "\n".join(steps)}
