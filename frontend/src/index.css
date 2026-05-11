@@ -1,24 +1,78 @@
 @import "tailwindcss";
 
+@theme {
+  --color-studio-bg: #0b0b0b;
+  --color-studio-card: #1a1a1a;
+}
+
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
+  font-family: Inter, system-ui, sans-serif;
+  background-color: #0b0b0b;
+  color: white;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  /* Prevent horizontal scroll globally */
+  overflow-x: hidden;
 }
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+  width: 100vw;
+  overflow-x: hidden;
+  height: 100%;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  overflow-x: hidden;
+}
+
+/* Math and Table wrap/scroll robustness */
+.math-render, .markdown-content, .prose {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  max-width: 100%;
+}
+
+.math-render table, .markdown-content table {
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+/* Katex sizing fix for mobile */
+.katex-display {
+  margin: 1em 0;
+  padding: 0.5em 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* Remove default focus outlines */
+*:focus {
+  outline: none !important;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+}
+
+/* Safe area for mobile keyboards / rounded screens */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 2rem);
+}
+
+@media (max-width: 768px) {
+  .message-bubble {
+    max-width: 95% !important;
+  }
 }

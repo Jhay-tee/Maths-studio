@@ -1,20 +1,17 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { CheckCircle2, CircleDashed, AlertCircle, FlaskConical } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 
 export default function SolutionStream({ steps, final, error, isStreaming }) {
-  // `steps` is expected to be an array of strings (step log messages)
-  // `final` is expected to be a string (the final answer text)
-  // `error` is expected to be null or { message: string }
-  // `isStreaming` boolean — true while SSE is still open
-
   const hasContent = steps.length > 0 || final || error;
-
   if (!hasContent) return null;
 
   return (
     <div className="space-y-6">
-
       {/* ── Step log ── */}
       {steps.length > 0 && (
         <div className="space-y-3">
@@ -41,19 +38,23 @@ export default function SolutionStream({ steps, final, error, isStreaming }) {
                       }`}
                     />
                   </div>
-                  <p
+                  <div
                     className={`text-xs font-mono tracking-tight transition-colors ${
                       isLast && isStreaming ? 'text-white/80' : 'text-white/40'
-                    }`}
+                    } markdown-content`}
                   >
-                    {step}
-                  </p>
+                    <ReactMarkdown 
+                      remarkPlugins={[remarkMath]} 
+                      rehypePlugins={[rehypeKatex]}
+                    >
+                      {step}
+                    </ReactMarkdown>
+                  </div>
                 </motion.div>
               );
             })}
           </AnimatePresence>
 
-          {/* Spinner shown while streaming and no final answer yet */}
           {isStreaming && !final && !error && (
             <motion.div
               initial={{ opacity: 0 }}
@@ -99,9 +100,8 @@ export default function SolutionStream({ steps, final, error, isStreaming }) {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
             transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-            className="bg-white/5 border border-white/10 p-6 rounded-xl shadow-2xl space-y-4"
+            className="bg-white/5 border border-white/10 p-6 rounded-xl shadow-2xl space-y-4 overflow-hidden"
           >
-            {/* Header row */}
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <FlaskConical className="w-3.5 h-3.5 text-white/40" />
@@ -114,37 +114,14 @@ export default function SolutionStream({ steps, final, error, isStreaming }) {
               </span>
             </div>
 
-            {/* Answer body — renders newlines and bold markdown simply */}
-            <div className="space-y-2">
-              {String(final)
-                .split('\n')
-                .map((line, i) => {
-                  // Render **bold** markdown inline
-                  const parts = line.split(/(\*\*[^*]+\*\*)/g);
-                  return (
-                    <p
-                      key={i}
-                      className={`font-mono leading-relaxed ${
-                        line.startsWith('**')
-                          ? 'text-sm text-green-400'
-                          : 'text-xl font-black tracking-tight text-white'
-                      }`}
-                    >
-                      {parts.map((part, j) =>
-                        part.startsWith('**') && part.endsWith('**') ? (
-                          <strong key={j} className="font-black">
-                            {part.slice(2, -2)}
-                          </strong>
-                        ) : (
-                          <span key={j}>{part}</span>
-                        )
-                      )}
-                    </p>
-                  );
-                })}
+            <div className="text-sm md:text-base font-mono leading-relaxed text-white prose prose-invert max-w-none math-render overflow-x-auto">
+              <ReactMarkdown 
+                remarkPlugins={[remarkMath]} 
+                rehypePlugins={[rehypeKatex]}
+              >
+                {final}
+              </ReactMarkdown>
             </div>
-
-            {/* Source model badge if available */}
           </motion.div>
         )}
       </AnimatePresence>

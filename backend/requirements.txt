@@ -7,3 +7,8 @@ numpy
 scipy
 sympy
 google-genai
+pandas
+openpyxl
+matplotlib
+plotly
+scikit-learn

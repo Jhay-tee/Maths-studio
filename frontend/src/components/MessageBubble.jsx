@@ -1,15 +1,28 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Trash2, MoreVertical } from 'lucide-react';
+import { Trash2, Copy, MoreVertical, Check } from 'lucide-react';
 import useLongPress from '../lib/useLongPress';
 import SessionView from './SessionView';
 
 export default function MessageBubble({ msg, onDelete }) {
   const [showOptions, setShowOptions] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const longPressProps = useLongPress(() => {
+    if (window.navigator.vibrate) window.navigator.vibrate(50);
     setShowOptions(true);
-  }, () => {});
+  }, () => {}, { delay: 1000 });
+
+  const handleCopy = (e) => {
+    e.stopPropagation();
+    const text = msg.content || msg.final || "";
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => {
+      setCopied(false);
+      setShowOptions(false);
+    }, 1500);
+  };
 
   const isAssistant = msg.role === 'assistant';
 
@@ -18,11 +31,21 @@ export default function MessageBubble({ msg, onDelete }) {
       <AnimatePresence>
         {showOptions && (
           <motion.div 
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.9 }}
-            className="absolute z-50 bg-[#1a1a1a] border border-white/10 p-1 rounded-lg shadow-2xl flex items-center gap-1 -top-12"
+            initial={{ opacity: 0, scale: 0.9, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 10 }}
+            className="absolute z-50 bg-[#1a1a1a] border border-white/10 p-1.5 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex items-center gap-1 -top-14"
           >
+            <button 
+              onClick={handleCopy}
+              className="flex items-center gap-2 px-3 py-2 hover:bg-white/5 text-white rounded-lg transition-all text-[10px] font-black uppercase tracking-widest"
+            >
+              {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+
+            <div className="w-px h-4 bg-white/10 mx-1" />
+
             <button 
               onMouseDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
@@ -32,15 +55,9 @@ export default function MessageBubble({ msg, onDelete }) {
                 onDelete();
                 setShowOptions(false);
               }}
-              className="flex items-center gap-2 px-3 py-2 hover:bg-red-500/10 text-red-500 rounded-md transition-all text-[10px] font-black uppercase tracking-widest"
+              className="flex items-center gap-2 px-3 py-2 hover:bg-red-500/10 text-red-500 rounded-lg transition-all text-[10px] font-black uppercase tracking-widest"
             >
               <Trash2 className="w-3.5 h-3.5" /> Delete
-            </button>
-            <button 
-              onClick={() => setShowOptions(false)}
-              className="px-3 py-2 hover:bg-white/5 text-white/40 rounded-md text-[10px] font-black uppercase"
-            >
-              Cancel
             </button>
           </motion.div>
         )}
@@ -48,7 +65,7 @@ export default function MessageBubble({ msg, onDelete }) {
 
       <div 
         {...longPressProps}
-        className={`max-w-[85%] md:max-w-[70%] transition-all duration-300 ${showOptions ? 'scale-[0.98] opacity-50' : ''}`}
+        className={`max-w-[90%] md:max-w-[70%] transition-all duration-300 ${showOptions ? 'scale-[0.98] opacity-50 blur-[2px]' : ''}`}
       >
         {!isAssistant ? (
           <div className="space-y-2">

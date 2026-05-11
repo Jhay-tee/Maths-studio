@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { X, Info, Trash2, Plus } from 'lucide-react';
+import { X, Info, Trash2, Plus, Book } from 'lucide-react';
 
-const HistorySidebar = ({ history, setShowHistory, deleteHistoryItem, loadHistory, setMessages }) => {
+const HistorySidebar = ({ history, setShowHistory, deleteHistoryItem, loadHistory, setMessages, setShowDocs }) => {
   const startNew = () => {
     setMessages([]);
     setShowHistory(false);
@@ -80,6 +80,14 @@ const HistorySidebar = ({ history, setShowHistory, deleteHistoryItem, loadHistor
         className="w-full py-4 bg-white text-black font-black uppercase text-xs tracking-widest flex items-center justify-center gap-2 hover:bg-gray-200 transition-colors"
       >
         <Plus className="w-4 h-4" /> New Session
+      </button>
+
+      <button 
+        onClick={() => { setShowDocs(true); setShowHistory(false); }}
+        className="w-full py-3 bg-[#1a1a1a] text-white/60 hover:text-white border-t border-white/5 flex items-center justify-center gap-2 transition-all group"
+      >
+        <Book className="w-3.5 h-3.5 opacity-40 group-hover:opacity-100" /> 
+        <span className="text-[10px] font-black uppercase tracking-widest">Docs & Capabilities</span>
       </button>
     </motion.div>
   );

@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react';
 
-export default function useLongPress(onLongPress, onClick, { delay = 500 } = {}) {
+export default function useLongPress(onLongPress, onClick, { delay = 800 } = {}) {
   const timeout = useRef();
   const target = useRef();
 

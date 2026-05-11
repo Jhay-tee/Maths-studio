@@ -1,6 +1,6 @@
 {
   "name": "Maths Studio by Jhaytee",
-  "description": "A deterministic engineering computation studio for math, mechanics, and structural analysis.",
+  "description": "Professional engineering computation studio. Supports multivariable calculus, structural FEM, fluid dynamics, algebraic systems, and data visualization.",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": ["Math Solving", "Engineering Diagrams", "Streaming Solutions"]
 }

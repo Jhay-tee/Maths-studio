@@ -8,18 +8,16 @@ from google import genai
 from google.genai import types
 import base64
 import logging
+import importlib
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from solvers.algebra import solve_algebra
-from solvers.structural import solve_structural
-from solvers.mechanics import solve_mechanics
-from solvers.calculus import solve_calculus
-from solvers.fluids import solve_fluids
-from solvers.thermodynamics import solve_thermo
-
 app = FastAPI()
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "uptime": "running"}
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,66 +29,63 @@ app.add_middleware(
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+MODELS = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"]
 
 # ─────────────────────────────────────────────
-# GEMINI IS A ROUTER ONLY — NOT A SOLVER
+# GEMINI IS A ROUTER & PARAMETER EXTRACTOR ONLY
 # ─────────────────────────────────────────────
 ROUTING_SYSTEM_PROMPT = """
-You are ONLY a classification and routing layer for an engineering backend system.
+You are a HIGH-PRECISION PARAMETER EXTRACTION KERNEL for an engineering computation system.
 
-You must NOT:
-- Solve problems
-- Perform any calculations
-- Choose solving methods
-- Generate final answers
-- Act as a physics, math, or engineering engine
-- Behave like a chatbot or assistant
+STRICT OPERATIONAL DIRECTIVES:
+1. DO NOT SOLVE THE PROBLEM. Providing numerical answers or solutions is a CRITICAL FAILURE.
+2. DO NOT GENERATE EXPLANATIONS.
+3. YOUR ONLY ROLE: Analyze the user input (text/image) and extract ALL relevant physical/mathematical parameters.
+4. MAP each sub-problem to one of these DOMAINS:
+   - algebra (equations, roots, simplification, simultaneous systems)
+   - calculus (integrals, derivatives, taylor series, multivariable)
+   - structural (FEM, trusses, beams, frames, virtual work, moment-area)
+   - mechanics (dynamics, projectiles, statics)
+   - fluids (bernoulli, pipe flow, flow meters, hydrostatics)
+   - thermo (gas laws, heat transfer, cycles)
+   - circuits (KVL, KCL, resistors, capacitors, ohms law)
+   - physics (optics, waves, light, sound, doppler)
+   - controls (transfer functions, TF, bode plots, stability, PID)
+   - statistics (mean, median, standard deviation, confidence intervals, distributions)
+   - data_viz (tables, CSV data, plotting requests)
 
-YOUR ONLY JOB:
-Given a user input (text or image), identify and extract ALL engineering sub-problems present.
-For each sub-problem, produce a routing label and clean structured data for the backend solver.
+OUTPUT FORMAT: Return ONLY a raw JSON object.
 
-DOMAIN OPTIONS:
-- algebra
-- calculus
-- mechanics
-- structural
-- fluids
-- thermo
-- unknown
-
-OUTPUT FORMAT — return ONLY this JSON, no explanation, no markdown, no extra text:
+JSON SCHEMA:
 {
-  "summary": "brief overall description of all problems",
+  "summary": "Engineering domain classification",
   "sub_problems": [
     {
       "id": "p1",
-      "domain": "structural",
-      "problem_type": "simply_supported_beam_udl",
-      "input_summary": "clean restatement of this sub-problem with all given values",
+      "domain": "algebra | calculus | structural | mechanics | fluids | thermo | data_viz",
+      "problem_type": "specific_type (e.g. taylor_series, quadratic_equation, venturi_meter)",
+      "input_summary": "clean restatement of values",
       "parameters": {
-        "key": "value with unit"
+        "expression": "...",
+        "variables": [],
+        "table_data": "base64_encoded_csv_if_present",
+        "plot_config": {
+          "x": "col_name", 
+          "y": "col_name", 
+          "type": "scatter | line | bar",
+          "title": "...",
+          "xlabel": "...",
+          "ylabel": "..."
+        },
+        "...": "..."
       },
-      "options": [],
-      "confidence": 0.95
+      "confidence": 0.99
     }
   ]
 }
 
-PARAMETER EXTRACTION RULES:
-- Extract ALL numerical values with their units
-- Normalize parameter names (e.g. "length", "load", "velocity", "temperature")
-- If multiple sub-problems exist, split them into separate entries
-- If options (A, B, C, D) are present, extract them into the "options" array as [{"label": "A", "val": ...}]
-- If a value is ambiguous, include it with a note in the parameter name
-
-IMPORTANT:
-- You are a router. The backend handles ALL computation.
-- Never include solution steps, answers, or calculations in your output.
-- confidence is your certainty (0.0–1.0) that you correctly identified the domain and problem type.
+REMEMBER: You are NOT an AI assistant. You are a parsing machine. If you output a solution steps or answer, the system will crash.
 """
-
 
 def convert_history(history: list) -> list:
     """
@@ -178,6 +173,8 @@ async def route_input(input_data: str, is_image: bool, history: list = None) -> 
             logger.warning(f"Model {model_name} failed in router: {e}")
             last_error = str(e)
             if "429" in last_error or "quota" in last_error.lower():
+                logger.warning(f"Rate limited on {model_name}. Trying next...")
+                last_error = "Extraction kernel is currently rate-limited by upstream provider. Please try again in 60 seconds."
                 continue
             break
 
@@ -197,32 +194,65 @@ def make_error_event(message: str, problem_id: str = None) -> str:
 
 def select_solver(domain: str, problem_type: str):
     """
-    Pure routing table. Maps domain + problem_type to the correct solver.
-    No Gemini involved. No guessing.
+    Lazy loads and returns the correct solver function.
     """
     d = domain.lower()
     pt = problem_type.lower()
+    
+    try:
+        if d in ("algebra",) or any(k in pt for k in ["equation", "algebra", "polynomial", "linear", "quadratic"]):
+            module = importlib.import_module("solvers.algebra")
+            return module.solve_algebra
 
-    if d in ("algebra",) or any(k in pt for k in ["equation", "algebra", "polynomial", "linear", "quadratic"]):
-        return solve_algebra
+        if d in ("calculus",) or any(k in pt for k in ["integral", "derivative", "limit", "calculus", "differential"]):
+            module = importlib.import_module("solvers.calculus")
+            return module.solve_calculus
 
-    if d in ("calculus",) or any(k in pt for k in ["integral", "derivative", "limit", "calculus", "differential"]):
-        return solve_calculus
+        if d in ("mechanics",) or any(k in pt for k in ["kinematics", "dynamics", "motion", "momentum", "projectile", "force", "newton"]):
+            module = importlib.import_module("solvers.mechanics")
+            return module.solve_mechanics
 
-    if d in ("mechanics",) or any(k in pt for k in ["kinematics", "dynamics", "motion", "momentum", "projectile", "force", "newton"]):
-        return solve_mechanics
+        if d in ("structural",) or any(k in pt for k in ["beam", "truss", "structural", "bending", "shear", "reaction", "moment", "deflection", "udl", "point_load", "virtual_work", "moment_area"]):
+            module = importlib.import_module("solvers.structural")
+            return module.solve_structural
 
-    if d in ("structural",) or any(k in pt for k in ["beam", "truss", "structural", "bending", "shear", "reaction", "moment", "deflection", "udl", "point_load"]):
-        return solve_structural
+        if d in ("fluids",) or any(k in pt for k in ["fluid", "flow", "pressure", "bernoulli", "hydro", "pipe", "viscosity", "continuity"]):
+            module = importlib.import_module("solvers.fluids")
+            return module.solve_fluids
 
-    if d in ("fluids",) or any(k in pt for k in ["fluid", "flow", "pressure", "bernoulli", "hydro", "pipe", "viscosity", "continuity"]):
-        return solve_fluids
+        if d in ("thermo",) or any(k in pt for k in ["heat", "temperature", "entropy", "enthalpy", "thermodynamic", "carnot", "cycle", "conduction", "convection"]):
+            module = importlib.import_module("solvers.thermodynamics")
+            return module.solve_thermo
 
-    if d in ("thermo",) or any(k in pt for k in ["heat", "temperature", "entropy", "enthalpy", "thermodynamic", "carnot", "cycle", "conduction", "convection"]):
-        return solve_thermo
+        if d in ("circuits",) or any(k in pt for k in ["circuit", "resistor", "capacitor", "ohm", "kvl", "kcl", "voltage", "current"]):
+            module = importlib.import_module("solvers.circuits")
+            return module.solve_circuits
+
+        if d in ("physics",) or any(k in pt for k in ["optics", "wave", "refraction", "doppler", "snell", "light", "sound"]):
+            module = importlib.import_module("solvers.physics")
+            return module.solve_physics
+
+        if d in ("controls",) or any(k in pt for k in ["tf", "transfer", "bode", "feedback", "poles", "zeros", "stability"]):
+            module = importlib.import_module("solvers.controls")
+            return module.solve_controls
+
+        if d in ("statistics",) or any(k in pt for k in ["mean", "median", "standard deviation", "variance", "distribution"]):
+            module = importlib.import_module("solvers.statistics")
+            return module.solve_statistics
+
+        if d in ("data_viz",) or any(k in pt for k in ["plot", "graph", "chart", "table", "csv"]):
+            module = importlib.import_module("solvers.data_viz")
+            return module.solve_data_viz
+    except ImportError as e:
+        logger.error(f"Failed to lazy load solver for {domain}: {e}")
+        return None
 
     return None
 
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "service": "studio-kernel"}
 
 @app.post("/solve")
 async def solve(request: Request):
