@@ -12,10 +12,51 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3000;
 
+// Rate limiting: Track requests by IP
+const ipRequests = new Map();
+const RATE_LIMIT_WINDOW = 1000; // 1 second
+const RATE_LIMIT_MAX = 2; // Max 2 requests per second
+const BLOCK_DURATION = 5000; // Block for 5 seconds if exceeded
+
+const rateLimiter = (req, res, next) => {
+  const ip = req.ip || req.connection.remoteAddress;
+  const now = Date.now();
+
+  if (!ipRequests.has(ip)) {
+    ipRequests.set(ip, { requests: [], blockedUntil: 0 });
+  }
+
+  const record = ipRequests.get(ip);
+
+  // Check if IP is currently blocked
+  if (record.blockedUntil > now) {
+    return res.status(429).json({
+      error: 'Too many requests. Please wait before trying again.',
+      retryAfter: Math.ceil((record.blockedUntil - now) / 1000)
+    });
+  }
+
+  // Clean old requests outside the window
+  record.requests = record.requests.filter(t => t > now - RATE_LIMIT_WINDOW);
+
+  // Check if exceeded limit
+  if (record.requests.length >= RATE_LIMIT_MAX) {
+    record.blockedUntil = now + BLOCK_DURATION;
+    return res.status(429).json({
+      error: 'Rate limit exceeded. Request blocked for 5 seconds.',
+      retryAfter: 5
+    });
+  }
+
+  record.requests.push(now);
+  next();
+};
+
 async function startServer() {
   app.use(cors());
   app.use(morgan('dev'));
   app.use(express.json({ limit: '10mb' }));
+  app.use(rateLimiter);
 
   // API Routes
   app.use('/api/compute', computeRouter);

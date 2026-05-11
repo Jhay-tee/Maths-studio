@@ -1,6 +1,7 @@
 import asyncio
 import numpy as np
 import sympy as sp
+from solvers.constants import G, PI
 
 async def solve_mechanics(data):
     yield {"type": "step", "content": "Initializing Classical Mechanics Kernel..."}
@@ -34,10 +35,10 @@ async def solve_mechanics(data):
 
 async def solve_projectile(params):
     yield {"type": "step", "content": "Analyzing Projectile Trajectory..."}
-    
+
     v0 = float(params.get("v0", params.get("velocity", 0)))
     theta_deg = float(params.get("theta", params.get("angle", 0)))
-    g = 9.81
+    g = float(params.get("g", G))
     
     if v0 <= 0:
         yield {"type": "final", "answer": "Error: Initial velocity must be greater than zero."}
@@ -90,35 +91,53 @@ async def solve_kinematics(params):
 
 async def solve_dynamics(params):
     yield {"type": "step", "content": "Solving Newton's Equations of Motion..."}
-    m = float(params.get("m", params.get("mass", 0)))
+    m = float(params.get("m", params.get("mass", 1)))
     f = float(params.get("f", params.get("force", 0)))
-    
+
     if m > 0:
         a = f / m
         answer = f"### Dynamics Resolution\nMass: {m} kg\nForce: {f} N\nResulting Acceleration: $a = F/m = {a:.2f}$ m/s$^2$"
+
+        # Force diagram: Show force vector and mass
+        force_magnitude = max(abs(f), 1)
+        diagram_data = {
+            "force": f,
+            "mass": m,
+            "acceleration": a,
+            "scale": force_magnitude
+        }
+        yield {"type": "diagram", "diagram_type": "force_diagram", "data": diagram_data}
     else:
         answer = "Error: Mass must be positive for dynamic analysis."
-        
+
     yield {"type": "final", "answer": answer}
 
 async def solve_vibrations(params):
     yield {"type": "step", "content": "Analyzing Simple Harmonic Motion..."}
     k = float(params.get("k", params.get("stiffness", 100)))
     m = float(params.get("m", params.get("mass", 1)))
-    
+    A = float(params.get("A", params.get("amplitude", 0.1)))  # Amplitude (default 0.1m)
+
     wn = np.sqrt(k/m)
     fn = wn / (2 * np.pi)
     tn = 1 / fn
-    
+
     steps = [
         "### Vibration Analysis (SHM)",
         f"- Stiffness ($k$): {k} N/m",
         f"- Mass ($m$): {m} kg",
+        f"- Amplitude ($A$): {A} m",
         "#### Natural Characteristics",
         f"- **Angular Frequency ($\\omega_n$):** $\\sqrt{{k/m}} = {wn:.3f}$ rad/s",
         f"- **Natural Frequency ($f_n$):** {fn:.3f} Hz",
         f"- **Period ($T_n$):** {tn:.3f} s"
     ]
+
+    # Generate displacement time response
+    t_response = np.linspace(0, 3*tn, 200)
+    x_response = A * np.cos(wn * t_response)
+
+    yield {"type": "diagram", "diagram_type": "vibration_response", "data": {"t": t_response.tolist(), "x": x_response.tolist(), "period": tn}}
     yield {"type": "final", "answer": "\n".join(steps)}
 
 async def solve_rotation(params):

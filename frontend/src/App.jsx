@@ -22,6 +22,7 @@ import MessageBubble from './components/MessageBubble';
 import ChatInput from './components/ChatInput';
 import SessionView from './components/SessionView';
 import DocsPage from './components/DocsPage';
+import ParameterDialog from './components/ParameterDialog';
 
 export default function App() {
   const [messages, setMessages] = useState([]);
@@ -34,6 +35,9 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [showDocs, setShowDocs] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
+  const [showParamDialog, setShowParamDialog] = useState(false);
+  const [missingParams, setMissingParams] = useState([]);
+  const [pendingCompute, setPendingCompute] = useState(null);
   const abortControllerRef = useRef(null);
   const scrollRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -96,8 +100,9 @@ export default function App() {
       timestamp: Date.now()
     };
 
-    setMessages(prev => [...prev, userMessage, assistantMessage]);
-    
+    // Always create fresh messages - don't accumulate previous assistant messages
+    setMessages(prev => [...prev.filter(m => m.role === 'user'), userMessage, assistantMessage]);
+
     // Capture current values before clearing state
     const currentInput = inputText;
     const currentImage = imagePreview;
@@ -183,9 +188,14 @@ export default function App() {
         if (finalAssistant) {
           saveComputation({
             type: 'Computation',
+            title: currentInput?.substring(0, 50) || 'Computation',
+            topic: 'Engineering', // Can be enhanced to detect from routing
             input: currentInput,
             result: finalAssistant.final,
-            steps: finalAssistant.steps,
+            final: finalAssistant.final,
+            steps: finalAssistant.steps || [],
+            diagrams: finalAssistant.diagrams || [],
+            units: finalAssistant.units || [],
             image: currentImage,
             timestamp: Date.now()
           }).then(() => loadHistory());

@@ -19,10 +19,10 @@ const HistorySidebar = ({ history, setShowHistory, deleteHistoryItem, loadHistor
     const mockAsstMsg = {
       id: `h-asst-${item.id}`,
       role: 'assistant',
-      steps: item.steps,
+      steps: item.steps || [],
       final: item.final,
-      diagrams: item.diagrams,
-      units: item.units,
+      diagrams: item.diagrams || [],
+      units: item.units || [],
       timestamp: item.timestamp + 1000
     };
     setMessages([mockUserMsg, mockAsstMsg]);
@@ -59,7 +59,7 @@ const HistorySidebar = ({ history, setShowHistory, deleteHistoryItem, loadHistor
             </div>
             <div className="text-xs font-bold truncate pr-6 uppercase tracking-tight">{item.title}</div>
             <div className="text-[9px] opacity-40 uppercase mt-1 truncate">
-              {item.topic} | {item.diagrams.length} Diagrams
+              {item.topic} | {(item.diagrams || []).length} Diagrams
             </div>
             <Trash2 
               className="w-3 h-3 absolute right-4 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 hover:text-red-500 transition-all" 

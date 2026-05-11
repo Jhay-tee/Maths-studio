@@ -1,5 +1,6 @@
 import asyncio
 import numpy as np
+from solvers.constants import WATER_DENSITY, G, ATM_PRESSURE
 
 async def solve_fluids(data):
     yield {"type": "step", "content": "Initializing Fluid Dynamics Kernel..."}
@@ -14,7 +15,7 @@ async def solve_fluids(data):
         elif "manometer" in raw or "hydrostatic" in raw:
             async for chunk in solve_hydrostatics(params):
                 yield chunk
-        elif "continuity" in raw or "continuity" in pt:
+        elif "continuity" in raw:
             async for chunk in solve_continuity(params):
                 yield chunk
         elif "bernoulli" in raw or "pressure" in raw:
@@ -68,7 +69,7 @@ async def solve_continuity(params):
 async def solve_flow_meter(params):
     yield {"type": "step", "content": "Analyzing Flow Meter (Venturi/Orifice)..."}
     # Formula: Q = Cd * A2 * sqrt(2*dP / (rho * (1 - beta^4)))
-    rho = float(params.get("rho", 1000))
+    rho = float(params.get("rho", WATER_DENSITY))
     d1 = float(params.get("d1", 0.1))
     d2 = float(params.get("d2", 0.05))
     dp = float(params.get("dp", 1000)) # Pressure drop
@@ -94,8 +95,8 @@ async def solve_flow_meter(params):
 async def solve_hydrostatics(params):
     yield {"type": "step", "content": "Calculating Hydrostatic Pressure..."}
     h = float(params.get("h", 1))
-    rho = float(params.get("rho", 1000))
-    g = 9.81
+    rho = float(params.get("rho", WATER_DENSITY))
+    g = float(params.get("g", G))
     
     p_gauge = rho * g * h
     
@@ -127,10 +128,9 @@ async def solve_bernoulli(params):
 
 async def solve_pipe_flow(params):
     yield {"type": "step", "content": "Calculating Reynolds Number..."}
-    # (Same as before but refined)
     v = float(params.get("v", 1))
     d = float(params.get("d", 0.1))
-    rho = float(params.get("rho", 1000))
+    rho = float(params.get("rho", WATER_DENSITY))
     mu = float(params.get("mu", 0.001))
     re = (rho * v * d) / mu
     regime = "Laminar" if re < 2300 else "Turbulent" if re > 4000 else "Transitional"
@@ -142,7 +142,7 @@ async def solve_head_loss(params):
     d = float(params.get("d", 0.1)) # diameter
     v = float(params.get("v", 2))   # velocity
     f = float(params.get("f", 0.02)) # friction factor
-    g = 9.81
+    g = float(params.get("g", G))
     
     # Darcy-Weisbach: hf = f * (L/D) * (v^2 / (2g))
     hf = f * (l / d) * (v**2 / (2 * g))

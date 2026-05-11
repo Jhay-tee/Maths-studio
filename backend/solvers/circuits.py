@@ -31,41 +31,58 @@ async def solve_ohms_law(params):
     v = float(params.get("v", params.get("voltage", 0)))
     i = float(params.get("i", params.get("current", 0)))
     r = float(params.get("r", params.get("resistance", 0)))
-    
+
     steps = ["### Ohm's Law Resolution"]
+    result_v, result_i, result_r = v, i, r
+
     if v and i:
-        r_calc = v / i
-        steps.append(f"- Calculated Resistance: $R = V/I = {r_calc:.2f}$ $\\Omega$")
+        result_r = v / i
+        steps.append(f"- Calculated Resistance: $R = V/I = {result_r:.2f}$ $\\Omega$")
     elif v and r:
-        i_calc = v / r
-        steps.append(f"- Calculated Current: $I = V/R = {i_calc:.4f}$ A")
+        result_i = v / r
+        steps.append(f"- Calculated Current: $I = V/R = {result_i:.4f}$ A")
     elif i and r:
-        v_calc = i * r
-        steps.append(f"- Calculated Voltage: $V = I \\cdot R = {v_calc:.2f}$ V")
+        result_v = i * r
+        steps.append(f"- Calculated Voltage: $V = I \\cdot R = {result_v:.2f}$ V")
     else:
         steps.append("Please provide at least two parameters out of V, I, R.")
-        
+
+    # Emit circuit diagram
+    diagram_data = {
+        "voltage": result_v,
+        "current": result_i,
+        "resistance": result_r,
+        "power": result_v * result_i if result_v and result_i else 0
+    }
+    yield {"type": "diagram", "diagram_type": "circuit_ohms", "data": diagram_data}
     yield {"type": "final", "answer": "\n".join(steps)}
 
 async def solve_resistor_network(params):
     yield {"type": "step", "content": "Analyzing Resistor Network..."}
     resistors = params.get("resistors", [])
     mode = params.get("mode", "series") # "series" or "parallel"
-    
+
     if not resistors:
         yield {"type": "final", "answer": "No resistor values found. Please provide a list of resistances."}
         return
-        
+
     if mode == "series":
         req = sum(resistors)
     else:
         req = 1 / sum(1/r for r in resistors)
-        
+
     steps = [
         f"### {mode.capitalize()} Resistor Analysis",
         f"- Components: {resistors} $\\Omega$",
         f"- **Equivalent Resistance ($R_{{eq}}$):** {req:.2f} $\\Omega$"
     ]
+
+    diagram_data = {
+        "resistors": resistors,
+        "mode": mode,
+        "equivalent": req
+    }
+    yield {"type": "diagram", "diagram_type": "resistor_network", "data": diagram_data}
     yield {"type": "final", "answer": "\n".join(steps)}
 
 async def solve_rc_circuit(params):
