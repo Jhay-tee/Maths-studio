@@ -96,8 +96,9 @@ export default function App() {
       timestamp: Date.now()
     };
 
-    setMessages(prev => [...prev, userMessage, assistantMessage]);
-    
+    // Always create fresh messages - don't accumulate previous assistant messages
+    setMessages(prev => [...prev.filter(m => m.role === 'user'), userMessage, assistantMessage]);
+
     // Capture current values before clearing state
     const currentInput = inputText;
     const currentImage = imagePreview;
@@ -183,9 +184,14 @@ export default function App() {
         if (finalAssistant) {
           saveComputation({
             type: 'Computation',
+            title: currentInput?.substring(0, 50) || 'Computation',
+            topic: 'Engineering', // Can be enhanced to detect from routing
             input: currentInput,
             result: finalAssistant.final,
-            steps: finalAssistant.steps,
+            final: finalAssistant.final,
+            steps: finalAssistant.steps || [],
+            diagrams: finalAssistant.diagrams || [],
+            units: finalAssistant.units || [],
             image: currentImage,
             timestamp: Date.now()
           }).then(() => loadHistory());

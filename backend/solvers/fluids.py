@@ -14,7 +14,7 @@ async def solve_fluids(data):
         elif "manometer" in raw or "hydrostatic" in raw:
             async for chunk in solve_hydrostatics(params):
                 yield chunk
-        elif "continuity" in raw or "continuity" in pt:
+        elif "continuity" in raw:
             async for chunk in solve_continuity(params):
                 yield chunk
         elif "bernoulli" in raw or "pressure" in raw:

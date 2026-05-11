@@ -24,6 +24,9 @@ export const saveComputation = async (data) => {
   const db = await initDB();
   return db.add(STORE_NAME, {
     ...data,
+    steps: data.steps || [],
+    diagrams: data.diagrams || [],
+    units: data.units || [],
     timestamp: Date.now()
   });
 };

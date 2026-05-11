@@ -17,8 +17,8 @@ async def solve_structural(sub: dict):
         async for chunk in solve_beam_advanced(params, raw): yield chunk
 
 async def solve_beam_advanced(params, raw):
-    yield {"type": "step", "content": "Analyzing beam using Singularity Functions..."}
-    
+    yield {"type": "step", "content": "Analyzing beam using Singularity Functions (Macaulay's Method)..."}
+
     # 1. Parameter Normalization
     L = float(params.get("l", 6))
     E = float(params.get("e", 200e9))
@@ -60,6 +60,9 @@ async def solve_beam_advanced(params, raw):
         RA = total_vertical_load - RB
         MA = 0
 
+    # Calculate reactions first and yield step
+    yield {"type": "step", "content": f"Calculating support reactions using equilibrium equations..."}
+
     # 3. Singularity (Macaulay) Functions
     def macaulay(x, a, n):
         return np.where(x >= a, (x - a)**n, 0)
@@ -80,6 +83,9 @@ async def solve_beam_advanced(params, raw):
             m -= (load['w'] / 2) * (macaulay(x, load['start'], 2) - macaulay(x, load['end'], 2))
         return m
 
+    # Yield step for shear/moment calculation
+    yield {"type": "step", "content": "Computing shear force and bending moment diagrams..."}
+
     # 4. Numerical Evaluation
     x_range = np.linspace(0, L, 501)
     v_vals = get_shear(x_range)
@@ -87,6 +93,9 @@ async def solve_beam_advanced(params, raw):
     
     max_m = np.max(np.abs(m_vals))
     max_v = np.max(np.abs(v_vals))
+
+    # Yield step for deflection
+    yield {"type": "step", "content": "Computing deflection profile using double integration (M/EI method)..."}
 
     # 5. Deflection (Integration Approximation)
     # Double integration of M/EI. Using trapezoidal rule for general cases.
@@ -132,6 +141,18 @@ async def solve_beam_advanced(params, raw):
         m_pt = get_moment(np.array([pt]))[0]
         steps.append(f"| {pt:.2f} | {v_pt:,.2f} | {m_pt:,.2f} |")
 
+    # Emit shear and moment diagrams
+    diagram_data = {
+        "x": x_range.tolist(),
+        "shear": v_vals.tolist(),
+        "moment": m_vals.tolist(),
+        "length": L,
+        "max_shear": float(max_v),
+        "max_moment": float(max_m),
+        "max_deflection": float(max_delta),
+        "type": "cantilever" if is_cantilever else "simply_supported"
+    }
+    yield {"type": "diagram", "diagram_type": "beam_analysis", "data": diagram_data}
     yield {"type": "final", "answer": "\n".join(steps)}
 
 # Note: solve_fem_frame and solve_mohrs_circle remain as in your original snippet.
