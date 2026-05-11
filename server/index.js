@@ -54,7 +54,7 @@ async function startServer() {
     return proc;
   };
 
-  let fastApiProcess = startPython('python3');
+  startPython('python3');
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {

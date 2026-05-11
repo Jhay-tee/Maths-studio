@@ -45,14 +45,35 @@ STRICT OPERATIONAL DIRECTIVES:
    - algebra (equations, roots, simplification, simultaneous systems)
    - calculus (integrals, derivatives, taylor series, multivariable)
    - structural (FEM, trusses, beams, frames, virtual work, moment-area)
-   - mechanics (dynamics, projectiles, statics)
-   - fluids (bernoulli, pipe flow, flow meters, hydrostatics)
+   - mechanics (kinematics, dynamics, projectiles, statics)
+   - fluids (bernoulli, pipe flow, flow meters, hydrostatics, continuity)
    - thermo (gas laws, heat transfer, cycles)
    - circuits (KVL, KCL, resistors, capacitors, ohms law)
    - physics (optics, waves, light, sound, doppler)
    - controls (transfer functions, TF, bode plots, stability, PID)
    - statistics (mean, median, standard deviation, confidence intervals, distributions)
    - data_viz (tables, CSV data, plotting requests)
+
+STRICT EXPRESSION GUIDELINES:
+- Field "expression": MUST be PURE mathematical syntax. 
+- REMOVE all English words like "Solve", "Find", "Calculate", "the equation", "result in".
+- If user says "Plot y = x^2 from -5 to 5", expression is "y = x^2". Put bounds in "parameters".
+- If user says "Determine the derivative of sin(x)", expression is "sin(x)".
+
+WORD PROBLEM EXTRACTION:
+- For word problems, DO NOT put text in the "expression" field. 
+- Extract ALL numbers and map them to standard physics/engineering keys in "parameters".
+- NORMALIZE ALL UNITS TO SI (meters, kilograms, seconds, Newtons, Pascals).
+  - e.g. "12kN" -> 12000, "5cm" -> 0.05, "10 min" -> 600.
+- Examples: 
+  - "velocity 5m/s" -> {"v": 5}
+  - "length 10m" -> {"L": 10}
+  - "mass 2kg" -> {"m": 2}
+  - "at the center" of 6m beam -> {"P_pos": 3}
+  - "point load of 12kN" -> {"P": 12000}
+  - "velocity changes from 2 to 6" -> {"v1": 2, "v2": 6}
+  - "water flowing at 2m/s in 10cm pipe" -> {"v1": 2, "D1": 0.1, "domain": "fluids"}
+  - "projectile launched at 20m/s at 45 degrees" -> {"v0": 20, "theta": 45, "domain": "mechanics"}
 
 OUTPUT FORMAT: Return ONLY a raw JSON object.
 
@@ -62,29 +83,20 @@ JSON SCHEMA:
   "sub_problems": [
     {
       "id": "p1",
-      "domain": "algebra | calculus | structural | mechanics | fluids | thermo | data_viz",
-      "problem_type": "specific_type (e.g. taylor_series, quadratic_equation, venturi_meter)",
-      "input_summary": "clean restatement of values",
+      "domain": "algebra | calculus | structural | mechanics | fluids | thermo | data_viz | physics | circuits | controls | statistics",
+      "problem_type": "specific_type (e.g. beam_deflection, continuity_equation, projectile_motion, ohms_law, bode_plot)",
+      "input_summary": "clean restatement for logging",
       "parameters": {
         "expression": "...",
         "variables": [],
-        "table_data": "base64_encoded_csv_if_present",
-        "plot_config": {
-          "x": "col_name", 
-          "y": "col_name", 
-          "type": "scatter | line | bar",
-          "title": "...",
-          "xlabel": "...",
-          "ylabel": "..."
-        },
+        "L": 10,
+        "v1": 2,
         "...": "..."
       },
       "confidence": 0.99
     }
   ]
 }
-
-REMEMBER: You are NOT an AI assistant. You are a parsing machine. If you output a solution steps or answer, the system will crash.
 """
 
 def convert_history(history: list) -> list:
@@ -199,6 +211,10 @@ def select_solver(domain: str, problem_type: str):
     d = domain.lower()
     pt = problem_type.lower()
     
+    if d in ("data_viz",) or any(k in pt for k in ["plot", "graph", "chart", "table", "csv"]):
+        module = importlib.import_module("solvers.data_viz")
+        return module.solve_data_viz
+
     try:
         if d in ("algebra",) or any(k in pt for k in ["equation", "algebra", "polynomial", "linear", "quadratic"]):
             module = importlib.import_module("solvers.algebra")
@@ -319,6 +335,10 @@ async def solve(request: Request):
             # so solvers can access sub["parameters"] directly
             if "parameters" not in sub:
                 sub["parameters"] = {}
+            
+            # Normalize parameters to standard engineering keys
+            from solvers.utils import normalize_params
+            sub["parameters"] = normalize_params(sub["parameters"])
 
             # Also keep input_summary accessible as raw_query for solver compatibility
             sub["raw_query"] = sub.get("input_summary", user_input)

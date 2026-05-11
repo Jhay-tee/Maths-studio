@@ -21,7 +21,7 @@ async def solve_structural(sub: dict):
     elif "truss" in pt or "truss" in raw:
         async for chunk in solve_fem_truss(params):
             yield chunk
-    elif "frame" in pt or "frame" in raw or "beam" in pt or "beam" in raw or "deflection" in raw:
+    elif ("frame" in pt or "frame" in raw or "beam" in pt or "beam" in raw or "deflection" in raw) and params.get("nodes"):
         async for chunk in solve_fem_frame(params):
             yield chunk
     elif "virtual_work" in pt or "virtual work" in raw:
@@ -275,11 +275,13 @@ async def solve_mohrs_circle(params):
 
 async def solve_beam(params, raw):
     yield {"type": "step", "content": "Analyzing Beam Deflection, Shear, and Bending Moments..."}
-    l = float(params.get("l", 5)) # Length
-    e = float(params.get("e", 200e9)) # Modulus (Steel)
-    i = float(params.get("i", 1e-4)) # Inertia
-    p = float(params.get("p", 1000)) # Point Load
-    w = float(params.get("w", 0))    # Distributed Load
+    # Lowercase keys for robust lookup
+    p_low = {k.lower(): v for k, v in params.items()}
+    l = float(p_low.get("l", 5)) # Length
+    e = float(p_low.get("e", 200e9)) # Modulus (Steel)
+    i = float(p_low.get("i", 1e-4)) # Inertia
+    p = float(p_low.get("p", 1000)) # Point Load
+    w = float(p_low.get("w", 0))    # Distributed Load
     
     steps = [f"### Euler-Bernoulli Beam Analysis"]
     

@@ -14,6 +14,9 @@ async def solve_fluids(data):
         elif "manometer" in raw or "hydrostatic" in raw:
             async for chunk in solve_hydrostatics(params):
                 yield chunk
+        elif "continuity" in raw or "continuity" in pt:
+            async for chunk in solve_continuity(params):
+                yield chunk
         elif "bernoulli" in raw or "pressure" in raw:
             async for chunk in solve_bernoulli(params):
                 yield chunk
@@ -28,6 +31,39 @@ async def solve_fluids(data):
             yield {"type": "final", "answer": "Fluid analysis complete. Flow rates are steady."}
     except Exception as e:
         yield {"type": "final", "answer": f"Fluids Solver Error: {str(e)}"}
+
+async def solve_continuity(params):
+    yield {"type": "step", "content": "Applying the Continuity Equation ($A_1 v_1 = A_2 v_2$)..."}
+    # Formula: A1 * v1 = A2 * v2
+    p_low = {k.lower(): v for k, v in params.items()}
+    
+    # Try multiple standard naming conventions
+    v1 = float(p_low.get("v1", p_low.get("u", 1)))
+    v2 = float(p_low.get("v2", p_low.get("v", 1)))
+    a1 = p_low.get("a1", p_low.get("area1"))
+    a2 = p_low.get("a2", p_low.get("area2"))
+    
+    steps = ["### Continuity Equation Analysis"]
+    steps.append(f"Constraint: $A_1 v_1 = A_2 v_2$ (Mass conservation for incompressible flow)")
+    steps.append(f"- Inlet Velocity ($v_1$): {v1} m/s")
+    steps.append(f"- Outlet Velocity ($v_2$): {v2} m/s")
+
+    if a1 is not None and a2 is None:
+        a1 = float(a1)
+        a2 = (a1 * v1) / v2
+        steps.append(f"- Area 1 ($A_1$): {a1} m$^2$")
+        steps.append(f"**Resulting Area 2 ($A_2$):** {a2:.4f} m$^2$")
+    elif a2 is not None and a1 is None:
+        a2 = float(a2)
+        a1 = (a2 * v2) / v1
+        steps.append(f"- Area 2 ($A_2$): {a2} m$^2$")
+        steps.append(f"**Resulting Area 1 ($A_1$):** {a1:.4f} m$^2$")
+    else:
+        ratio = v1 / v2
+        steps.append(f"**Area Ratio ($A_2 / A_1$):** {ratio:.4f}")
+        steps.append(f"Conclusion: The cross-sectional area changes by a factor of {ratio:.2f}.")
+
+    yield {"type": "final", "answer": "\n".join(steps)}
 
 async def solve_flow_meter(params):
     yield {"type": "step", "content": "Analyzing Flow Meter (Venturi/Orifice)..."}

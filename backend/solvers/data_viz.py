@@ -7,6 +7,66 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import r2_score
+import sympy as sp
+from solvers.utils import clean_math_string
+
+async def solve_function_plot(sub):
+    yield {"type": "step", "content": "Generating function plot..."}
+    params = sub.get("parameters", {})
+    expr_str = params.get("expression", "")
+    expr_str = clean_math_string(expr_str)
+    bounds = params.get("bounds", {})
+    
+    # Default bounds if not provided
+    x_min, x_max = -10, 10
+    var_name = "x"
+    
+    if bounds:
+        for v, b in bounds.items():
+            var_name = v
+            x_min, x_max = b[0], b[1]
+            break
+            
+    try:
+        # Check if it's "y = ..."
+        if "=" in expr_str:
+            expr_str = expr_str.split("=", 1)[1].strip()
+            
+        x_sym = sp.Symbol(var_name)
+        func_expr = sp.sympify(expr_str)
+        f_lambdified = sp.lambdify(x_sym, func_expr, "numpy")
+        
+        x_vals = np.linspace(x_min, x_max, 500)
+        y_vals = f_lambdified(x_vals)
+        
+        plt.figure(figsize=(10, 6))
+        plt.plot(x_vals, y_vals, color='#3b82f6', linewidth=2)
+        plt.axhline(0, color='white', linewidth=0.5, alpha=0.3)
+        plt.axvline(0, color='white', linewidth=0.5, alpha=0.3)
+        plt.grid(True, linestyle='--', alpha=0.2)
+        plt.title(f"Plot of $f({var_name}) = {sp.latex(func_expr)}$")
+        plt.xlabel(var_name)
+        plt.ylabel(f"f({var_name})")
+        plt.style.use('dark_background')
+        
+        buf_png = io.BytesIO()
+        plt.savefig(buf_png, format='png', transparent=True, dpi=150)
+        buf_png.seek(0)
+        png_b64 = base64.b64encode(buf_png.read()).decode('utf-8')
+        plt.close()
+        
+        yield {
+            "type": "diagram",
+            "diagram_type": "plot",
+            "data": {
+                "image": f"data:image/png;base64,{png_b64}",
+                "caption": f"Visualization of {expr_str} over [{x_min}, {x_max}]."
+            }
+        }
+        yield {"type": "final", "answer": f"Function $f({var_name})$ has been successfully plotted."}
+        
+    except Exception as e:
+        yield {"type": "final", "answer": f"Error plotting function: {str(e)}"}
 
 async def solve_data_viz(sub: dict):
     yield {"type": "step", "content": "Initializing Advanced Data Visualization Kernel..."}
@@ -14,7 +74,13 @@ async def solve_data_viz(sub: dict):
     params = sub.get("parameters", {})
     table_data = params.get("table_data", "")
     plot_config = params.get("plot_config", {})
+    expr = params.get("expression", "")
     
+    if not table_data and expr:
+        async for chunk in solve_function_plot(sub):
+            yield chunk
+        return
+
     if not table_data:
         yield {"type": "final", "answer": "Error: No table data found to visualize. Please upload a CSV/XLSX file or provide text-based table data."}
         return

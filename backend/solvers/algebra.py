@@ -1,12 +1,14 @@
 import asyncio
 import sympy as sp
 import re
+from solvers.utils import safe_sympify, clean_math_string
 
 async def solve_algebra(data):
     yield {"type": "step", "content": "Initializing Algebra Engine..."}
     
     params = data.get("parameters", {})
     expr_str = params.get("expression", data.get("raw_query", ""))
+    expr_str = clean_math_string(expr_str)
     
     if not expr_str:
         yield {"type": "final", "answer": "Error: No algebraic expression found to solve."}
@@ -82,13 +84,14 @@ async def solve_algebra(data):
             yield {"type": "step", "content": f"Detected {len(equations_raw)} simultaneous equations."}
             eqs = []
             for eq_text in equations_raw:
+                eq_text = clean_math_string(eq_text)
                 if "=" in eq_text:
-                    lhs_str, rhs_str = eq_text.split("=")
-                    lhs = sp.sympify(lhs_str.strip(), locals=symbols)
-                    rhs = sp.sympify(rhs_str.strip(), locals=symbols)
+                    parts = eq_text.split("=", 1)
+                    lhs = safe_sympify(parts[0], symbols=symbols)
+                    rhs = safe_sympify(parts[1], symbols=symbols)
                     eqs.append(sp.Eq(lhs, rhs))
                 else:
-                    eqs.append(sp.Eq(sp.sympify(eq_text.strip(), locals=symbols), 0))
+                    eqs.append(sp.Eq(safe_sympify(eq_text, symbols=symbols), 0))
             
             yield {"type": "step", "content": "Solving system of equations..."}
             sol_dict = sp.solve(eqs, list(symbols.values()))
@@ -117,14 +120,14 @@ async def solve_algebra(data):
 
         else:
             # Single equation: Check for Quadratic or higher polynomial
-            eq_text = equations_raw[0]
+            eq_text = clean_math_string(equations_raw[0])
             if "=" in eq_text:
-                lhs_str, rhs_str = eq_text.split("=")
-                lhs = sp.sympify(lhs_str.strip(), locals=symbols)
-                rhs = sp.sympify(rhs_str.strip(), locals=symbols)
+                parts = eq_text.split("=", 1)
+                lhs = safe_sympify(parts[0], symbols=symbols)
+                rhs = safe_sympify(parts[1], symbols=symbols)
                 equation = sp.Eq(lhs, rhs)
             else:
-                equation = sp.Eq(sp.sympify(eq_text.strip(), locals=symbols), 0)
+                equation = sp.Eq(safe_sympify(eq_text, symbols=symbols), 0)
             
             # Target variable
             target_var = symbols[vars_to_use[0]] if vars_to_use else sp.Symbol('x')

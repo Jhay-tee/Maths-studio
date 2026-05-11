@@ -1,11 +1,13 @@
 import asyncio
 import sympy as sp
+from solvers.utils import safe_sympify, clean_math_string
 
 async def solve_calculus(data):
     yield {"type": "step", "content": "Initializing Advanced Calculus Kernel..."}
     
     params = data.get("parameters", {})
     expr_str = params.get("expression", data.get("raw_query", ""))
+    expr_str = clean_math_string(expr_str)
     prob_type = data.get("problem_type", "").lower()
     
     if not expr_str:
@@ -49,7 +51,7 @@ async def solve_calculus(data):
                     order = int(parts[1].split()[0])
                 except: pass
 
-            expr = sp.sympify(clean_expr, locals=symbols)
+            expr = safe_sympify(clean_expr, symbols=symbols)
             result = sp.series(expr, primary_var, point, order)
             
             steps.extend([
@@ -63,8 +65,8 @@ async def solve_calculus(data):
         # 2. Gradient Calculation
         elif any(kw in expr_str.lower() or kw in prob_type for kw in ["gradient", "grad", "nabla"]):
             yield {"type": "step", "content": "Computing Gradient Vector (∇f)..."}
-            clean_expr = expr_str.replace("gradient", "").replace("grad", "").replace("nabla", "").strip()
-            expr = sp.sympify(clean_expr, locals=symbols)
+            clean_expr = clean_math_string(expr_str.replace("gradient", "").replace("grad", "").replace("nabla", ""))
+            expr = safe_sympify(clean_expr, symbols=symbols)
             grad = [sp.diff(expr, v) for v in vars_list]
             
             grad_latex = "\\begin{bmatrix} " + " \\\\ ".join([sp.latex(g) for g in grad]) + " \\end{bmatrix}"
@@ -78,8 +80,8 @@ async def solve_calculus(data):
         elif "integral" in prob_type or "∫" in expr_str or "integrate" in expr_str.lower():
             yield {"type": "step", "content": "Performing Multiple Integration..."}
             dim = expr_str.count("∫") or expr_str.lower().count("double") * 2 or expr_str.lower().count("triple") * 3 or 1
-            clean_expr = expr_str.replace("∫", "").replace("triple", "").replace("double", "").replace("integral of", "").replace("integrate", "").strip()
-            expr = sp.sympify(clean_expr, locals=symbols)
+            clean_expr = clean_math_string(expr_str.replace("∫", "").replace("triple", "").replace("double", "").replace("integral of", "").replace("integrate", ""))
+            expr = safe_sympify(clean_expr, symbols=symbols)
             
             result = expr
             for i in range(min(dim, len(vars_list))):
@@ -94,8 +96,8 @@ async def solve_calculus(data):
         # 4. Partial Derivatives
         elif any(kw in prob_type or kw in expr_str.lower() for kw in ["derivative", "partial", "d/"]):
             yield {"type": "step", "content": "Computing Partial Derivatives..."}
-            clean_expr = expr_str.replace("partial", "").replace("derivative of", "").strip()
-            expr = sp.sympify(clean_expr, locals=symbols)
+            clean_expr = clean_math_string(expr_str.replace("partial", "").replace("derivative of", ""))
+            expr = safe_sympify(clean_expr, symbols=symbols)
             
             results = []
             for v in vars_list:
@@ -121,9 +123,11 @@ async def solve_calculus(data):
             # Very basic parser for 2nd/1st order linear
             # expr_str format assumed: "y'' + 2*y' + y = sin(t)"
             try:
-                lhs_str, rhs_str = expr_str.split("=")
-                lhs = sp.sympify(lhs_str.replace("y''", "y.diff(t, t)").replace("y'", "y.diff(t)"), locals={'y': y, 't': t})
-                rhs = sp.sympify(rhs_str, locals={'t': t})
+                parts = expr_str.split("=", 1)
+                lhs_str = parts[0]
+                rhs_str = parts[1] if len(parts) > 1 else "0"
+                lhs = safe_sympify(lhs_str.replace("y''", "y.diff(t, t)").replace("y'", "y.diff(t)"), symbols={'y': y, 't': t})
+                rhs = safe_sympify(rhs_str, symbols={'t': t})
                 eq = sp.Eq(lhs, rhs)
                 sol = sp.dsolve(eq, y)
                 steps.extend([
@@ -139,7 +143,8 @@ async def solve_calculus(data):
             yield {"type": "step", "content": "Computing Fourier Series expansion..."}
             # Format: Fourier series of x^2 from -pi to pi
             x = sp.Symbol('x')
-            expr = sp.sympify(expr_str.lower().replace("fourier", "").replace("series", "").replace("of", "").split("from")[0].strip())
+            clean_expr = clean_math_string(expr_str.lower().replace("fourier", "").replace("series", "").replace("of", ""))
+            expr = safe_sympify(clean_expr)
             fs = sp.fourier_series(expr, (x, -sp.pi, sp.pi))
             steps.extend([
                 "### Fourier Analysis",
@@ -150,7 +155,7 @@ async def solve_calculus(data):
 
         else:
             yield {"type": "step", "content": "Auto-detecting multivariable structure..."}
-            expr = sp.sympify(expr_str, locals=symbols)
+            expr = safe_sympify(expr_str, symbols=symbols)
             diff_res = sp.diff(expr, primary_var)
             int_res = sp.integrate(expr, primary_var)
             
