@@ -65,7 +65,7 @@ export default function MessageBubble({ msg, onDelete }) {
 
       <div 
         {...longPressProps}
-        className={`max-w-[90%] md:max-w-[70%] transition-all duration-300 ${showOptions ? 'scale-[0.98] opacity-50 blur-[2px]' : ''}`}
+        className={`w-full max-w-[98%] md:max-w-[92%] transition-all duration-300 ${showOptions ? 'scale-[0.98] opacity-50 blur-[2px]' : ''}`}
       >
         {!isAssistant ? (
           <div className="space-y-2">
@@ -75,14 +75,14 @@ export default function MessageBubble({ msg, onDelete }) {
               </div>
             )}
             {msg.content && (
-              <div className="bg-white text-black p-4 rounded-2xl rounded-tr-sm shadow-xl font-medium text-sm leading-relaxed">
+              <div className="bg-white text-black p-5 rounded-[1.4rem] rounded-tr-md shadow-xl font-medium text-sm leading-7">
                 {msg.content}
               </div>
             )}
           </div>
         ) : (
           <div className="w-full">
-            <div className={`p-1 rounded-2xl ${msg.isProcessing ? 'animate-pulse opacity-60' : ''}`}>
+            <div className={`p-1 rounded-3xl ${msg.isProcessing ? 'opacity-85' : ''}`}>
               <SessionView 
                 currentSteps={msg.steps || []}
                 currentFinal={msg.final}

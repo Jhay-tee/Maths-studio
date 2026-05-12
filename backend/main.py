@@ -11,12 +11,15 @@ from google.genai import types
 import base64
 import logging
 import importlib
+import re
 from solvers.utils import (
     normalize_params,
     apply_standard_defaults,
     merge_params,
     find_missing_params,
     parse_user_supplied_value,
+    resolve_numeric_expressions,
+    polish_final_answer,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -108,12 +111,19 @@ STRICT OPERATIONAL DIRECTIVES:
    - controls (transfer functions, TF, bode plots, stability, PID)
    - statistics (mean, median, standard deviation, confidence intervals, distributions)
    - data_viz (tables, CSV data, plotting requests, graphs, charts)
+5. IF THE USER ASKS MULTIPLE QUESTIONS OR A QUESTION WITH MULTIPLE DISTINCT TASKS, SPLIT THEM INTO MULTIPLE sub_problems.
+6. IF THE USER ASKS FOR BOTH A GRAPH AND AN ANALYSIS/SOLUTION, RETURN MULTIPLE sub_problems so one handles plotting and another handles solving.
+7. FOR WORD PROBLEMS, extract numbers, units, relationships, and requested outputs. DO NOT pass natural-language sentences into the "expression" field.
+8. FOR EMBEDDED CALCULATIONS, preserve the computable relation in parameters using simple symbolic/numeric syntax only.
 
 STRICT EXPRESSION GUIDELINES:
 - Field "expression": MUST be PURE mathematical syntax. 
 - REMOVE all English words like "Solve", "Find", "Calculate", "the equation", "result in".
 - If user says "Plot y = x^2 from -5 to 5", expression is "y = x^2". Put bounds in "parameters".
 - If user says "Determine the derivative of sin(x)", expression is "sin(x)".
+- NEVER place full word-problem text into "expression".
+- NEVER put prose such as "minimum force to move the book" into "expression".
+- Use explicit math like "2*x + y = 4", "sin(x)", "P/(A*E)", or "m*g".
 
 WORD PROBLEM EXTRACTION:
 - For word problems, DO NOT put text in the "expression" field. 
@@ -268,6 +278,239 @@ def make_error_event(message: str, problem_id: str = None) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
+def split_user_questions(user_input: str) -> list[str]:
+    text = (user_input or "").strip()
+    if not text:
+        return []
+
+    parts = [
+        segment.strip(" \n\t-")
+        for segment in re.split(r"\?\s+|\n{2,}", text)
+        if segment.strip()
+    ]
+    return parts if len(parts) > 1 else [text]
+
+
+def build_fallback_route(user_input: str) -> dict | None:
+    text = (user_input or "").strip()
+    lowered = text.lower()
+    if not text:
+        return None
+
+    if any(keyword in lowered for keyword in ["plot", "graph"]) and "=" in text:
+        equation_match = re.search(r"([A-Za-z0-9\s+\-*/^().=]+)", text)
+        expression = equation_match.group(1).strip() if equation_match else text
+        sub_problems = [
+            {
+                "id": "p1",
+                "domain": "data_viz",
+                "problem_type": "function_plot",
+                "input_summary": text,
+                "parameters": {"expression": expression},
+                "confidence": 1.0,
+            }
+        ]
+        if any(keyword in lowered for keyword in ["solve", "find", "intercept", "root", "gradient", "slope"]):
+            sub_problems.append(
+                {
+                    "id": "p2",
+                    "domain": "algebra",
+                    "problem_type": "equation_solving",
+                    "input_summary": text,
+                    "parameters": {"expression": expression},
+                    "confidence": 0.95,
+                }
+            )
+        return {
+            "summary": "Graph plotting request",
+            "_model": "rule-based-route",
+            "sub_problems": sub_problems,
+        }
+
+    if "=" in text and not any(keyword in lowered for keyword in ["plot", "graph"]):
+        return {
+            "summary": "Algebra equation solving request",
+            "_model": "rule-based-route",
+            "sub_problems": [
+                {
+                    "id": "p1",
+                    "domain": "algebra",
+                    "problem_type": "equation_solving",
+                    "input_summary": text,
+                    "parameters": {"expression": text},
+                    "confidence": 1.0,
+                }
+            ],
+        }
+
+    if "deflection values" in lowered and "plot" in lowered:
+        return {
+            "summary": "Engineering data plotting request",
+            "_model": "rule-based-route",
+            "sub_problems": [
+                {
+                    "id": "p1",
+                    "domain": "data_viz",
+                    "problem_type": "plot_data",
+                    "input_summary": text,
+                    "parameters": {},
+                    "confidence": 1.0,
+                }
+            ],
+        }
+
+    if any(keyword in lowered for keyword in ["plot", "graph"]) and re.search(r"\d", text):
+        return {
+            "summary": "Numeric plotting request",
+            "_model": "rule-based-route",
+            "sub_problems": [
+                {
+                    "id": "p1",
+                    "domain": "data_viz",
+                    "problem_type": "plot_data",
+                    "input_summary": text,
+                    "parameters": {},
+                    "confidence": 0.95,
+                }
+            ],
+        }
+
+    if any(keyword in lowered for keyword in ["beam", "cantilever", "truss", "column", "deflection", "shear", "moment"]):
+        sub_problems = [
+            {
+                "id": "p1",
+                "domain": "structural",
+                "problem_type": "structural_analysis",
+                "input_summary": text,
+                "parameters": {},
+                "confidence": 0.95,
+            }
+        ]
+        if "=" in text:
+            sub_problems.append(
+                {
+                    "id": "p2",
+                    "domain": "algebra",
+                    "problem_type": "equation_solving",
+                    "input_summary": text,
+                    "parameters": {"expression": text},
+                    "confidence": 0.8,
+                }
+            )
+        return {
+            "summary": "Structural analysis request",
+            "_model": "rule-based-route",
+            "sub_problems": sub_problems,
+        }
+
+    if any(keyword in lowered for keyword in ["book", "table", "friction", "normal force"]):
+        return {
+            "summary": "Statics and friction analysis",
+            "_model": "rule-based-route",
+            "sub_problems": [
+                {
+                    "id": "p1",
+                    "domain": "mechanics",
+                    "problem_type": "static_friction",
+                    "input_summary": text,
+                    "parameters": {},
+                    "confidence": 0.98,
+                }
+            ],
+        }
+
+    if any(keyword in lowered for keyword in ["pressure at the bottom", "bubble", "vegetable oil", "hole at the bottom", "hydrostatic"]):
+        return {
+            "summary": "Hydrostatics concept question",
+            "_model": "rule-based-route",
+            "sub_problems": [
+                {
+                    "id": "p1",
+                    "domain": "fluids",
+                    "problem_type": "hydrostatics",
+                    "input_summary": text,
+                    "parameters": {},
+                    "confidence": 0.98,
+                }
+            ],
+        }
+
+    return None
+
+
+def build_multi_question_route(user_input: str) -> dict | None:
+    parts = split_user_questions(user_input)
+    if len(parts) <= 1:
+        return None
+
+    sub_problems = []
+    for index, part in enumerate(parts, start=1):
+        route = build_fallback_route(part)
+        if route is None:
+            return None
+        for sub in route.get("sub_problems", []):
+            copy = dict(sub)
+            copy["id"] = f"p{len(sub_problems) + 1}"
+            copy["input_summary"] = part
+            sub_problems.append(copy)
+
+    if not sub_problems:
+        return None
+
+    return {
+        "summary": "Multi-question request",
+        "_model": "rule-based-route",
+        "sub_problems": sub_problems,
+    }
+
+
+def sanitize_routing_result(routing: dict, user_input: str, input_type: str) -> dict:
+    if input_type != "text":
+        return routing
+
+    multi_route = build_multi_question_route(user_input)
+    if multi_route is not None:
+        return multi_route
+
+    fallback = build_fallback_route(user_input)
+    if fallback is None:
+        return routing
+
+    sub_problems = routing.get("sub_problems") or []
+    if not sub_problems:
+        return fallback
+
+    lowered = (user_input or "").lower()
+    if any(keyword in lowered for keyword in ["plot", "graph"]) and "=" in user_input:
+        return fallback
+    if "deflection values" in lowered and "plot" in lowered:
+        return fallback
+    if any(keyword in lowered for keyword in ["book", "table", "friction", "normal force"]):
+        return fallback
+    if any(keyword in lowered for keyword in ["pressure at the bottom", "bubble", "vegetable oil", "hole at the bottom", "hydrostatic"]):
+        return fallback
+    if "=" in user_input and not any(keyword in lowered for keyword in ["plot", "graph"]):
+        return fallback
+
+    return routing
+
+
+def clean_sub_problem(domain: str, sub: dict) -> dict:
+    cleaned = dict(sub)
+    params = dict(cleaned.get("parameters") or {})
+    expr = params.get("expression")
+
+    if isinstance(expr, str):
+        expr_text = expr.strip()
+        word_count = len(re.findall(r"[A-Za-z]+", expr_text))
+        has_sentence_markers = any(token in expr_text.lower() for token in ["what", "why", "when", "if ", "minimum", "force needed", "problem", "value of"])
+        if domain not in {"algebra", "calculus", "data_viz"} and (word_count > 8 or has_sentence_markers):
+            params.pop("expression", None)
+
+    cleaned["parameters"] = params
+    return cleaned
+
+
 def select_solver(domain: str, problem_type: str):
     """
     Lazy loads and returns the correct solver function.
@@ -393,6 +636,7 @@ async def solve(request: Request):
                 })
 
                 routing = await route_input(user_input, is_image, history)
+                routing = sanitize_routing_result(routing, user_input, input_type)
 
             if "error" in routing:
                 yield make_error_event("Routing Failed: " + routing["error"])
@@ -419,6 +663,7 @@ async def solve(request: Request):
                 problem_type = sub.get("problem_type", "unknown").lower()
                 problem_id = sub.get("id", f"p{idx}")
                 confidence = sub.get("confidence", 0.0)
+                sub = clean_sub_problem(domain, sub)
 
                 yield make_event({
                     "type": "step",
@@ -433,8 +678,10 @@ async def solve(request: Request):
                     key: parse_user_supplied_value(value)
                     for key, value in supplemental_params.items()
                 }
-                sub["parameters"] = apply_standard_defaults(
-                    merge_params(sub["parameters"], parsed_supplemental)
+                sub["parameters"] = resolve_numeric_expressions(
+                    apply_standard_defaults(
+                        merge_params(sub["parameters"], parsed_supplemental)
+                    )
                 )
                 if raw_data.get("plot_config"):
                     sub["parameters"]["plot_config"] = raw_data.get("plot_config", {})
@@ -477,6 +724,17 @@ async def solve(request: Request):
                     async with asyncio.timeout(SOLVE_TIMEOUT_SECONDS):
                         async for chunk in solver_fn(sub):
                             chunk["problem_id"] = problem_id
+
+                            if len(sub_problems) > 1 and chunk.get("type") == "final":
+                                summary = sub.get("input_summary", f"Problem {idx + 1}")
+                                chunk["answer"] = f"### Problem {idx + 1}\n{summary}\n\n{chunk.get('answer', '')}"
+
+                            if chunk.get("type") == "final":
+                                chunk["answer"] = polish_final_answer(
+                                    chunk.get("answer", ""),
+                                    domain=domain,
+                                    problem_type=problem_type,
+                                )
 
                             if chunk.get("type") == "final" and sub.get("options"):
                                 ans_text = str(chunk.get("answer", ""))

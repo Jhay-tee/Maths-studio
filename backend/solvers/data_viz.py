@@ -8,7 +8,44 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import r2_score
 import sympy as sp
-from solvers.utils import clean_math_string
+import re
+from solvers.utils import clean_math_string, safe_sympify
+
+
+def _coerce_plot_values(values, x_vals):
+    if np.isscalar(values):
+        return np.full_like(x_vals, float(values), dtype=float)
+    array = np.asarray(values, dtype=float)
+    if array.shape == ():
+        return np.full_like(x_vals, float(array), dtype=float)
+    return array
+
+
+def _extract_inline_series(raw_query):
+    text = (raw_query or "").strip()
+    if not text:
+        return None
+
+    number_pattern = r"[-+]?\d*\.?\d+"
+    values_match = re.search(r"values?\s*(?:\(.*?\))?\s*:\s*([0-9.,\s-]+)", text, re.IGNORECASE)
+    if values_match:
+        values = [float(item) for item in re.findall(number_pattern, values_match.group(1))]
+        if len(values) >= 2:
+            interval_match = re.search(r"(\d+(?:\.\d+)?)\s*[- ]?meter intervals?", text, re.IGNORECASE)
+            interval = float(interval_match.group(1)) if interval_match else 1.0
+            start_match = re.search(r"from\s+(-?\d+(?:\.\d+)?)\s+to\s+(-?\d+(?:\.\d+)?)", text, re.IGNORECASE)
+            if start_match:
+                start = float(start_match.group(1))
+            else:
+                start = 0.0
+            x_values = [start + idx * interval for idx in range(len(values))]
+            return {
+                "columns": ["x", "y"],
+                "rows": [{"x": x, "y": y} for x, y in zip(x_values, values)],
+                "title": "Extracted data from prompt",
+            }
+
+    return None
 
 async def solve_function_plot(sub):
     yield {"type": "step", "content": "Generating function plot..."}
@@ -28,25 +65,50 @@ async def solve_function_plot(sub):
             break
             
     try:
-        # Check if it's "y = ..."
-        if "=" in expr_str:
-            expr_str = expr_str.split("=", 1)[1].strip()
-            
         x_sym = sp.Symbol(var_name)
-        func_expr = sp.sympify(expr_str)
+        symbol_names = sorted(set(re.findall(r"[A-Za-z_]\w*", expr_str or "")) | {var_name})
+        symbol_map = {name: sp.Symbol(name) for name in symbol_names}
+
+        if "=" in expr_str:
+            lhs_text, rhs_text = [part.strip() for part in expr_str.split("=", 1)]
+            lhs = safe_sympify(lhs_text, symbols=symbol_map)
+            rhs = safe_sympify(rhs_text, symbols=symbol_map)
+            equation = sp.Eq(lhs, rhs)
+            free_symbols = sorted(equation.free_symbols, key=lambda sym: sym.name)
+
+            dependent_var = None
+            if sp.Symbol("y") in free_symbols:
+                dependent_var = sp.Symbol("y")
+            elif len(free_symbols) == 2 and x_sym in free_symbols:
+                dependent_var = next(sym for sym in free_symbols if sym != x_sym)
+
+            if dependent_var is not None:
+                solutions = sp.solve(equation, dependent_var)
+                if not solutions:
+                    raise ValueError("Could not isolate the dependent variable for plotting.")
+                func_expr = solutions[0]
+                ylabel = dependent_var.name
+                caption_expr = f"{dependent_var} = {sp.sstr(func_expr)}"
+            else:
+                raise ValueError("This equation cannot be plotted as a single-valued function yet.")
+        else:
+            func_expr = safe_sympify(expr_str, symbols=symbol_map)
+            ylabel = f"f({var_name})"
+            caption_expr = expr_str
+
         f_lambdified = sp.lambdify(x_sym, func_expr, "numpy")
         
         x_vals = np.linspace(x_min, x_max, 500)
-        y_vals = f_lambdified(x_vals)
+        y_vals = _coerce_plot_values(f_lambdified(x_vals), x_vals)
         
         plt.figure(figsize=(10, 6))
         plt.plot(x_vals, y_vals, color='#3b82f6', linewidth=2)
         plt.axhline(0, color='white', linewidth=0.5, alpha=0.3)
         plt.axvline(0, color='white', linewidth=0.5, alpha=0.3)
         plt.grid(True, linestyle='--', alpha=0.2)
-        plt.title(f"Plot of $f({var_name}) = {sp.latex(func_expr)}$")
+        plt.title(f"Plot of ${sp.latex(func_expr)}$")
         plt.xlabel(var_name)
-        plt.ylabel(f"f({var_name})")
+        plt.ylabel(ylabel)
         plt.style.use('dark_background')
         
         buf_png = io.BytesIO()
@@ -60,13 +122,33 @@ async def solve_function_plot(sub):
             "diagram_type": "plot",
             "data": {
                 "image": f"data:image/png;base64,{png_b64}",
-                "caption": f"Visualization of {expr_str} over [{x_min}, {x_max}]."
+                "caption": f"Visualization of {caption_expr} over [{x_min}, {x_max}]."
             }
         }
-        yield {"type": "final", "answer": f"Function $f({var_name})$ has been successfully plotted."}
+
+        summary_lines = [
+            "### Graph Ready",
+            f"- Plotted over {var_name} in [{x_min}, {x_max}]",
+            f"- Relation: ${sp.latex(func_expr)}$",
+        ]
+        if len(getattr(func_expr, "free_symbols", [])) <= 1:
+            try:
+                y_intercept = float(func_expr.subs(x_sym, 0))
+                summary_lines.append(f"- y-intercept: {y_intercept:.4f}")
+            except Exception:
+                pass
+            try:
+                roots = sp.solve(sp.Eq(func_expr, 0), x_sym)
+                real_roots = [root for root in roots if getattr(root, "is_real", False) or root.is_real is None]
+                if real_roots:
+                    root_text = ", ".join(sp.sstr(root) for root in real_roots[:4])
+                    summary_lines.append(f"- x-intercept(s): {root_text}")
+            except Exception:
+                pass
+        yield {"type": "final", "answer": "\n".join(summary_lines)}
         
     except Exception as e:
-        yield {"type": "final", "answer": f"Error plotting function: {str(e)}"}
+        yield {"type": "error", "message": f"Unable to plot this relation cleanly: {str(e)}"}
 
 async def solve_data_viz(sub: dict):
     yield {"type": "step", "content": "Initializing Advanced Data Visualization Kernel..."}
@@ -75,23 +157,41 @@ async def solve_data_viz(sub: dict):
     table_data = params.get("table_data", "")
     plot_config = params.get("plot_config", {})
     expr = params.get("expression", "")
+    raw_query = sub.get("raw_query", "")
     
     if not table_data and expr:
         async for chunk in solve_function_plot(sub):
             yield chunk
         return
 
+    inline_series = None if table_data else _extract_inline_series(raw_query)
+    if inline_series is not None:
+        df = pd.DataFrame(inline_series["rows"])
+        plot_config = {
+            "type": plot_config.get("type", "line"),
+            "title": plot_config.get("title") or "Deflection vs Position",
+            "xlabel": plot_config.get("xlabel") or "Position (m)",
+            "ylabel": plot_config.get("ylabel") or "Deflection (mm)",
+            "x": "x",
+            "y": "y",
+            "annotate_max": True,
+        }
+    else:
+        df = None
+
     if not table_data:
-        yield {"type": "final", "answer": "Error: No table data found to visualize. Please upload a CSV/XLSX file or provide text-based table data."}
-        return
+        if df is None:
+            yield {"type": "final", "answer": "I could not find graphable data in the prompt. Provide an equation, upload a table, or include clear numeric values."}
+            return
 
     try:
         # Parsing data
-        try:
-            decoded = base64.b64decode(table_data).decode('utf-8')
-            df = pd.read_csv(io.StringIO(decoded))
-        except:
-            df = pd.read_csv(io.StringIO(table_data))
+        if df is None:
+            try:
+                decoded = base64.b64decode(table_data).decode('utf-8')
+                df = pd.read_csv(io.StringIO(decoded))
+            except Exception:
+                df = pd.read_csv(io.StringIO(table_data))
             
         yield {"type": "step", "content": f"Successfully parsed table with {len(df)} rows."}
         
@@ -111,6 +211,8 @@ async def solve_data_viz(sub: dict):
         
         plot_results = {}
         
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+
         if is_stress_strain:
             strain_col = [c for c in df.columns if c.lower() == "strain"][0]
             stress_col = [c for c in df.columns if c.lower() == "stress"][0]
@@ -126,9 +228,7 @@ async def solve_data_viz(sub: dict):
             plt.ylabel(custom_ylabel or "Stress (σ) [Pa]")
             plt.title(custom_title or "Stress-Strain Curve Analysis")
             plot_results['modulus'] = z[0]
-        else:
-            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-
+        
         if len(numeric_cols) >= 2:
             x_col = plot_config.get("x") or numeric_cols[0]
             y_col = plot_config.get("y") or numeric_cols[1]
@@ -150,6 +250,19 @@ async def solve_data_viz(sub: dict):
                 plt.plot(x, y_pred, '--', label=f"Fit: R²={r2:.3f}", color='#ef4444')
                 plot_results['r2'] = r2
                 plot_results['equation'] = f"y = {z[0]:.2f}x + {z[1]:.2f}"
+
+            if plot_config.get("annotate_max"):
+                max_idx = int(np.argmax(y))
+                plt.scatter([x[max_idx]], [y[max_idx]], color='#ef4444', s=60, zorder=5)
+                plt.annotate(
+                    f"Max ({x[max_idx]:.2f}, {y[max_idx]:.2f})",
+                    (x[max_idx], y[max_idx]),
+                    textcoords="offset points",
+                    xytext=(10, 10),
+                    color='white',
+                    fontsize=9,
+                )
+                plot_results['max_point'] = {"x": float(x[max_idx]), "y": float(y[max_idx])}
             
             plt.xlabel(custom_xlabel or x_col)
             plt.ylabel(custom_ylabel or y_col)
@@ -211,8 +324,10 @@ async def solve_data_viz(sub: dict):
         elif 'r2' in plot_results:
             answer += f"- **Regression Equation:** {plot_results['equation']}\n"
             answer += f"- **R-squared ($R^2$):** {plot_results['r2']:.4f}\n"
+        if 'max_point' in plot_results:
+            answer += f"- **Maximum point:** ({plot_results['max_point']['x']:.2f}, {plot_results['max_point']['y']:.2f})\n"
             
         yield {"type": "final", "answer": answer}
         
     except Exception as e:
-        yield {"type": "final", "answer": f"Data Viz kernel error: {str(e)}"}
+        yield {"type": "error", "message": f"Visualization failed: {str(e)}"}

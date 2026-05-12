@@ -23,6 +23,8 @@ async def solve_algebra(data):
         # Exclude common single-letter constants if they are alone (e, i, d)
         # But for algebra, we usually want to keep them.
         vars_to_use = sorted(list(all_potential))
+        if not vars_to_use:
+            vars_to_use = ["x"]
         
         symbols = {v: sp.Symbol(v) for v in vars_to_use}
         
@@ -148,13 +150,16 @@ async def solve_algebra(data):
             
             # Step by step logic for quadratic specifically
             is_quadratic = False
-            poly = sp.Poly(equation.lhs - equation.rhs, target_var)
-            if poly.degree() == 2:
-                is_quadratic = True
-                coeffs = poly.all_coeffs()
-                a, b, c = coeffs
-                discriminant = b**2 - 4*a*c
-                yield {"type": "step", "content": "Detected Quadratic Equation. Applying Quadratic Formula..."}
+            try:
+                poly = sp.Poly(equation.lhs - equation.rhs, target_var)
+                if poly.degree() == 2:
+                    is_quadratic = True
+                    coeffs = poly.all_coeffs()
+                    a, b, c = coeffs
+                    discriminant = b**2 - 4*a*c
+                    yield {"type": "step", "content": "Detected Quadratic Equation. Applying Quadratic Formula..."}
+            except Exception:
+                is_quadratic = False
             
             steps = ["### Algebraic Resolution", f"**Method Used:** {preferred_method.title()}"]
             steps.append(f"Equation: $${sp.latex(equation)}$$")
