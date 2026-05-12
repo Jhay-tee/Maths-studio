@@ -6,3 +6,12 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Python virtual environments
+.venv/
+backend/.venv/
+*.venv/
+
+# Frontend build output (if present)
+frontend/dist/
+backend/dist/
