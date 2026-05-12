@@ -5,23 +5,32 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
-const INTERNAL_STEP_PREFIXES = ['Studio Kernel:', 'Dispatching Sub-problem', 'Initializing '];
+const INTERNAL_STEP_PREFIXES = ['Studio Kernel:', 'Dispatching Sub-problem'];
+const LOGIC_STEP_PREFIXES = ['Initializing ', 'Variables identified:', 'Performing ', 'Computing ', 'Evaluating ', 'Analyzing ', 'Resolving '];
 
 const markdownComponents = {
-  h1: ({ children }) => <h1 className="text-2xl font-black tracking-tight mt-2 mb-5 text-white">{children}</h1>,
-  h2: ({ children }) => <h2 className="text-xl font-bold tracking-tight mt-8 mb-4 text-white">{children}</h2>,
-  h3: ({ children }) => <h3 className="text-[11px] font-black uppercase tracking-[0.24em] text-white/55 mt-7 mb-3">{children}</h3>,
-  h4: ({ children }) => <h4 className="text-sm font-semibold tracking-wide mt-5 mb-2 text-white/90">{children}</h4>,
-  p: ({ children }) => <p className="leading-8 text-white/88 mb-5">{children}</p>,
-  ul: ({ children }) => <ul className="space-y-3 mb-5 pl-1">{children}</ul>,
-  ol: ({ children }) => <ol className="space-y-3 mb-5 list-decimal pl-6">{children}</ol>,
-  li: ({ children }) => <li className="leading-7 text-white/88 pl-1">{children}</li>,
-  strong: ({ children }) => <strong className="text-white">{children}</strong>,
-  code: ({ children }) => <code className="bg-white/10 px-1.5 py-0.5 rounded text-[0.95em] text-white">{children}</code>,
-  hr: () => <div className="my-6 border-t border-white/10" />,
+  h1: ({ children }) => <h1 className="text-3xl font-black tracking-tighter mt-12 mb-8 text-white uppercase border-b-4 border-white pb-3">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-2xl font-black tracking-tight mt-10 mb-6 text-white uppercase">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-blue-500 mt-12 mb-4 drop-shadow-[0_0_10px_rgba(59,130,246,0.3)]">{children}</h3>,
+  h4: ({ children }) => <h4 className="text-xs font-black tracking-widest mt-8 mb-4 text-white/40 uppercase">{children}</h4>,
+  p: ({ children }) => <p className="leading-relaxed text-white/90 mb-6 text-base font-medium">{children}</p>,
+  ul: ({ children }) => <ul className="space-y-4 mb-8 pl-2">{children}</ul>,
+  ol: ({ children }) => <ol className="space-y-4 mb-8 list-decimal pl-6">{children}</ol>,
+  li: ({ children }) => (
+    <li className="leading-relaxed text-white/90 pl-2">
+      <div className="flex gap-3">
+        <div className="mt-2.5 h-1 w-1 bg-white/20 shrink-0" />
+        <div>{children}</div>
+      </div>
+    </li>
+  ),
+  strong: ({ children }) => <strong className="font-black text-white">{children}</strong>,
+  code: ({ children }) => <code className="bg-white/5 px-2 py-0.5 rounded font-mono text-[0.9em] text-blue-300 border border-white/5 shadow-inner">{children}</code>,
+  hr: () => <div className="my-12 border-t-2 border-white/5 border-dashed" />,
 };
 
 const isInternalStep = (step = '') => INTERNAL_STEP_PREFIXES.some(prefix => step.startsWith(prefix));
+const isLogicStep = (step = '') => LOGIC_STEP_PREFIXES.some(prefix => step.startsWith(prefix));
 
 const sanitizeSteps = (steps = []) => {
   const seen = new Set();
@@ -36,7 +45,6 @@ const sanitizeFinal = (final) => {
   if (!final) return final;
   return final
     .split('\n')
-    .filter(line => !line.includes('**Method Used:**'))
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
@@ -49,26 +57,35 @@ export default function SolutionStream({ steps, final, error, isStreaming }) {
   if (!hasContent) return null;
 
   return (
-    <div className="space-y-6">
-      {/* ── Conversational Flow ── */}
+    <div className="space-y-8">
+      {/* ── Computational Sequence ── */}
       <AnimatePresence mode="popLayout">
-        {visibleSteps.map((step, i) => (
-          <motion.div
-            key={`step-${i}`}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-white/80 leading-relaxed markdown-content prose prose-invert max-w-none prose-sm md:prose-base"
-          >
-            <ReactMarkdown 
-              remarkPlugins={[remarkMath]}
-              components={markdownComponents}
-              rehypePlugins={[rehypeKatex]}
+        {visibleSteps.map((step, i) => {
+          const isLogic = isLogicStep(step);
+          
+          return (
+            <motion.div
+              key={`step-${i}`}
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              className={`relative pl-12 pb-12 last:pb-4 ${isLogic ? 'opacity-30' : 'opacity-100'}`}
             >
-              {step}
-            </ReactMarkdown>
-            {i < visibleSteps.length - 1 && <div className="h-px w-8 bg-white/5 my-6" />}
-          </motion.div>
-        ))}
+              {/* Vertical Timeline Line */}
+              <div className="absolute left-0 top-0 bottom-0 w-px bg-white/5" />
+              <div className={`absolute left-[-4px] top-6 w-2 h-2 rounded-full border border-[#0b0b0b] ${isLogic ? 'bg-white/10' : 'bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.6)]'}`} />
+              
+              <div className={`markdown-content ${isLogic ? 'text-xs font-mono lowercase tracking-wider opacity-60' : 'text-lg font-serif'}`}>
+                <ReactMarkdown 
+                  remarkPlugins={[remarkMath]}
+                  components={markdownComponents}
+                  rehypePlugins={[rehypeKatex]}
+                >
+                  {step}
+                </ReactMarkdown>
+              </div>
+            </motion.div>
+          );
+        })}
       </AnimatePresence>
 
       {/* ── Final content (interleaved) ── */}

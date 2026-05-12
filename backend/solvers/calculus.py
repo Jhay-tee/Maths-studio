@@ -100,7 +100,9 @@ async def solve_calculus(data):
             
             results = []
             for v in vars_list:
-                results.append(f"$\\frac{{\\partial f}}{{\\partial {sp.latex(v)}}} = {sp.latex(sp.diff(expr, v))}$")
+                yield {"type": "step", "content": f"Applying differentiation rules for variable ${sp.latex(v)}$..."}
+                deriv = sp.diff(expr, v)
+                results.append(f"$\\frac{{\\partial f}}{{\\partial {sp.latex(v)}}} = {sp.latex(deriv)}$")
             
             steps.extend([
                 f"**Operation:** Partial Differentiation",

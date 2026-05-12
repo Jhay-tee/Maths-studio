@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Trash2, Copy, MoreVertical, Check } from 'lucide-react';
 import useLongPress from '../lib/useLongPress';
@@ -7,6 +7,24 @@ import SessionView from './SessionView';
 export default function MessageBubble({ msg, onDelete }) {
   const [showOptions, setShowOptions] = useState(false);
   const [copied, setCopied] = useState(false);
+  const optionsRef = useRef(null);
+
+  useEffect(() => {
+    if (!showOptions) return;
+
+    const handleClickOutside = (event) => {
+      if (optionsRef.current && !optionsRef.current.contains(event.target)) {
+        setShowOptions(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, [showOptions]);
 
   const longPressProps = useLongPress(() => {
     if (window.navigator.vibrate) window.navigator.vibrate(50);
@@ -31,6 +49,7 @@ export default function MessageBubble({ msg, onDelete }) {
       <AnimatePresence>
         {showOptions && (
           <motion.div 
+            ref={optionsRef}
             initial={{ opacity: 0, scale: 0.9, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 10 }}

@@ -307,6 +307,13 @@ def find_missing_params(domain, problem_type, params, raw_query=""):
             ]
 
     if lowered_domain == "structural" and any(keyword in lowered_type or keyword in lowered_query for keyword in ["beam", "deflection", "shear", "moment"]):
+        # Check if we need both types for the specific superimposed case
+        if "point load" in lowered_query and "distributed load" in lowered_query:
+            return require([
+                {"key": "L", "aliases": ["l"], "label": "Beam length", "unit": "m", "hint": "Total span length."},
+                {"key": "P", "aliases": ["concentrated_load"], "label": "Point Load Magnitude", "unit": "N"},
+                {"key": "w", "aliases": ["udl"], "label": "Uniformly Distributed Load", "unit": "N/m"},
+            ])
         return require([
             {"key": "L", "aliases": ["l"], "label": "Beam length", "unit": "m", "hint": "Total span length."},
         ])
@@ -318,6 +325,39 @@ def find_missing_params(domain, problem_type, params, raw_query=""):
             return [
                 {"key": "data", "label": "Dataset", "unit": "comma-separated", "hint": "Example: 12, 15, 18, 20"},
             ]
+
+    if (lowered_domain == "thermo" and ("gas law" in lowered_query or "ideal gas" in lowered_query)):
+        known = sum(1 for key in ["p", "v", "n", "t"] if normalized.get(key) not in (None, ""))
+        if known < 3:
+            return [
+                {"key": "p", "label": "Pressure", "unit": "Pa", "hint": "Provide any 3 of P, V, n, T."},
+                {"key": "v", "label": "Volume", "unit": "m³"},
+                {"key": "n", "label": "Moles", "unit": "mol"},
+                {"key": "t", "label": "Temperature", "unit": "K"},
+            ]
+
+    if "sine" in lowered_query or "cosine" in lowered_query or "tangent" in lowered_query:
+        # Check if we have an expression or variable
+        if not normalized.get("expression") and not re.search(r"[a-z]", raw_query):
+            return [
+                {"key": "expression", "label": "Mathematical Expression", "hint": "Example: sin(x)"}
+            ]
+
+    if "factor" in lowered_query:
+        # If no expression found in query
+        if not normalized.get("expression") and not re.search(r"[a-z]", raw_query):
+             return [
+                {"key": "expression", "label": "Expression to factor", "hint": "Example: x^2 + 5x + 6"}
+            ]
+        # Always allow method selection if factorization is keyword
+        return [
+            {
+                "key": "factor_method", 
+                "label": "Factorization Method", 
+                "hint": "Optional: grouping, quadratic formula, standard",
+                "options": ["standard", "grouping", "quadratic formula", "difference of squares"]
+            }
+        ]
 
     return []
 

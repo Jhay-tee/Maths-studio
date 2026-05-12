@@ -150,6 +150,7 @@ WORD PROBLEM EXTRACTION:
   - "velocity changes from 2 to 6" -> {"v1": 2, "v2": 6}
   - "water flowing at 2m/s in 10cm pipe" -> {"v1": 2, "D1": 0.1, "domain": "fluids"}
   - "projectile launched at 20m/s at 45 degrees" -> {"v0": 20, "theta": 45, "domain": "mechanics"}
+  - "plot sin(x)" -> {"expression": "sin(x)", "domain": "data_viz", "x_min": -6.28, "x_max": 6.28}
 
 OUTPUT FORMAT: Return ONLY a raw JSON object.
 

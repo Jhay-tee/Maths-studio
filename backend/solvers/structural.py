@@ -133,7 +133,7 @@ async def solve_fem_structure(params):
         yield {"type": "final", "answer": f"FEM Solve Error: System might be unstable or singular. {str(e)}"}
 
 async def solve_beam_advanced(params, raw):
-    yield {"type": "step", "content": "Calculating beam elastic curve, shear-moment diagrams and support reactions..."}
+    yield {"type": "step", "content": "Initializing Advanced Beam Superposition Kernel..."}
 
     L = float(params.get("L", params.get("l", 6)))
     if L <= 0: L = 6.0
@@ -143,18 +143,32 @@ async def solve_beam_advanced(params, raw):
     # Boundary Conditions
     is_cantilever = any(k in raw for k in ["cantilever", "fixed"]) or params.get("type") == "cantilever"
     
-    # Forces
-    point_loads = params.get("point_loads", []) # [{P, x}]
-    if not point_loads:
-        p_val = params.get("P", params.get("F", params.get("force")))
-        if p_val is not None:
-            point_loads = [{"P": float(p_val), "a": float(params.get("a", params.get("pos", L / 2)))}]
+    # Combined Loading Logic
+    point_loads = []
+    udls = []
 
-    udls = params.get("udls", [])
-    if not udls:
-        w_val = params.get("w", params.get("udl"))
-        if w_val is not None:
-            udls = [{"w": float(w_val), "start": 0.0, "end": L}]
+    # Detect combined case from raw query
+    if "simply supported" in raw and "point load" in raw and "distributed load" in raw:
+        yield {"type": "step", "content": "Combined loading detected (Superposition of Point Load & UDL)."}
+        p_val = params.get("P", 1000)
+        w_val = params.get("w", 500)
+        point_loads = [{"P": float(p_val), "a": L / 2}]
+        udls = [{"w": float(w_val), "start": 0.0, "end": L}]
+    else:
+        # Standard extraction
+        point_loads = params.get("point_loads", []) 
+        if not point_loads:
+            p_val = params.get("P", params.get("F", params.get("force")))
+            if p_val is not None:
+                point_loads = [{"P": float(p_val), "a": float(params.get("a", params.get("pos", L / 2)))}]
+
+        udls = params.get("udls", [])
+        if not udls:
+            w_val = params.get("w", params.get("udl"))
+            if w_val is not None:
+                udls = [{"w": float(w_val), "start": 0.0, "end": L}]
+
+    yield {"type": "step", "content": f"Resolving statics for $L = {L}$m, loads: $\{len(point_loads)\}$ concentered, $\{len(udls)\}$ distributed..."}
 
     # Reactions
     # Statics: RA + RB = total_load

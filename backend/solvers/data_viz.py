@@ -48,14 +48,30 @@ def _extract_inline_series(raw_query):
     return None
 
 async def solve_function_plot(sub):
-    yield {"type": "step", "content": "Generating function plot..."}
+    yield {"type": "step", "content": "Initializing Advanced Data Visualization Kernel..."}
     params = sub.get("parameters", {})
     expr_str = params.get("expression", "")
-    expr_str = clean_math_string(expr_str)
-    bounds = params.get("bounds", {})
     
+    # Handle common trigonometric names
+    trig_replacements = {
+        r"\bsine\b": "sin",
+        r"\bcosine\b": "cos",
+        r"\btangent\b": "tan",
+        r"\bsecant\b": "sec",
+        r"\bcosecant\b": "csc",
+        r"\bcotangent\b": "cot"
+    }
+    for pattern, repl in trig_replacements.items():
+        expr_str = re.sub(pattern, repl, expr_str, flags=re.IGNORECASE)
+    
+    expr_str = clean_math_string(expr_str)
+    
+    yield {"type": "step", "content": f"Normalized expression: $f = {expr_str}$"}
+    
+    bounds = params.get("bounds", {})
     # Default bounds if not provided
-    x_min, x_max = -10, 10
+    x_min = float(params.get("x_min", -10))
+    x_max = float(params.get("x_max", 10))
     var_name = "x"
     
     if bounds:
@@ -64,6 +80,8 @@ async def solve_function_plot(sub):
             x_min, x_max = b[0], b[1]
             break
             
+    yield {"type": "step", "content": f"Computing values over domain [{x_min}, {x_max}]..."}
+    
     try:
         # Detect multiple equations if passed as one string
         sub_exprs = [expr_str]
@@ -84,6 +102,7 @@ async def solve_function_plot(sub):
         symbol_map = {name: sp.Symbol(name) for name in symbol_names}
 
         if "=" in plot_eq:
+            yield {"type": "step", "content": "Parsing equation and isolating dependent variable..."}
             lhs_text, rhs_text = [part.strip() for part in plot_eq.split("=", 1)]
             lhs = safe_sympify(lhs_text, symbols=symbol_map)
             rhs = safe_sympify(rhs_text, symbols=symbol_map)
@@ -104,9 +123,6 @@ async def solve_function_plot(sub):
                     # Try solving for x if y failed
                     solutions = sp.solve(equation, x_sym)
                     if solutions:
-                        # We solved for x = f(y), but we want y = f(x) for plotting
-                        # This is inverse, usually we just want to plot. 
-                        # Let's just swap them for the sake of plotting if possible.
                         func_expr = solutions[0]
                         ylabel = x_sym.name
                         x_sym = dependent_var
@@ -119,8 +135,6 @@ async def solve_function_plot(sub):
                 
                 caption_expr = f"{ylabel} = {sp.sstr(func_expr)}"
             else:
-                # No dependent var found, maybe it's something like "x^2 + y^2 = 25"
-                # For now, let's just use the lhs - rhs as the function if it's f(x) = 0
                 func_expr = lhs - rhs
                 ylabel = "f(x)"
                 caption_expr = plot_eq
@@ -130,6 +144,7 @@ async def solve_function_plot(sub):
             caption_expr = plot_eq
 
         # Simplify the function before plotting
+        yield {"type": "step", "content": "Simplifying expression for optimal performance..."}
         func_expr = simplify_math(func_expr)
         
         # Ensure func_expr only contains the independent variable

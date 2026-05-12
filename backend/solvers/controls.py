@@ -118,10 +118,22 @@ def poly_to_latex(coeffs):
 
 async def solve_frequency_response(params):
     yield {"type": "step", "content": "Generating Bode Magnitude and Phase characteristics..."}
-    num = params.get("num", [1])
-    den = params.get("den", [1, 10])
     
-    w = np.logspace(-1, 3, 100)
+    # Handle num/den as lists or potential string coefficients
+    num = params.get("num")
+    den = params.get("den")
+
+    if isinstance(num, str):
+        num = [float(x.strip()) for x in num.strip("[]").split(",") if x.strip()]
+    if isinstance(den, str):
+        den = [float(x.strip()) for x in den.strip("[]").split(",") if x.strip()]
+
+    num = num or [1]
+    den = den or [1, 10]
+    
+    yield {"type": "step", "content": f"Computing response for Transfer Function: $G(s) = \\frac{{{poly_to_latex(num)}}}{{{poly_to_latex(den)}}}$"}
+
+    w = np.logspace(-1, 3, 200)
     mag = []
     phase = []
     

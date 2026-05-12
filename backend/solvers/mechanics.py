@@ -65,12 +65,14 @@ async def solve_mechanics(data):
 
 
 async def solve_projectile(params):
-    yield {"type": "step", "content": "Analyzing projectile trajectory and flight envelope..."}
+    yield {"type": "step", "content": "Analyzing projectile flight geometry..."}
 
     v0 = float(params.get("v0", params.get("velocity", 0)))
     theta_deg = float(params.get("theta", params.get("angle", 0)))
     y0 = float(params.get("y0", params.get("h0", 0)))
     g = float(params.get("g", G))
+
+    yield {"type": "step", "content": "Evaluating flight equations of motion (Kinematic Ballistics)..."}
 
     if v0 <= 0:
         yield {"type": "final", "answer": "Error: initial velocity must be greater than zero."}
@@ -79,25 +81,17 @@ async def solve_projectile(params):
     theta_rad = np.radians(theta_deg)
     vx = v0 * np.cos(theta_rad)
     vy = v0 * np.sin(theta_rad)
+    
+    yield {"type": "step", "content": f"Velocity components: $v_x = {vx:.2f}$ m/s, $v_y = {vy:.2f}$ m/s"}
 
     coeffs = [-0.5 * g, vy, y0]
     roots = np.roots(coeffs)
     positive_roots = [float(root.real) for root in roots if abs(root.imag) < 1e-9 and root.real >= 0]
     t_flight = max(positive_roots) if positive_roots else 0.0
     h_max = y0 + (vy ** 2) / (2 * g)
-    t_peak = vy / g if g else 0.0
     range_x = vx * t_flight
-
-    # Uncertainty Analysis
-    uncertainties = {k.replace("_sigma", ""): v for k, v in params.items() if k.endswith("_sigma")}
-    range_sigma = 0
-    if uncertainties:
-        # Example: Propagate for Range R = vx * t_flight
-        # R = (v0 cos theta) * (v0 sin theta + sqrt((v0 sin theta)^2 + 2 g y0)) / g
-        # Using the helper
-        expr = f"(v0 * cos(theta * pi / 180)) * (v0 * sin(theta * pi / 180) + sqrt((v0 * sin(theta * pi / 180))**2 + 2 * g * y0)) / g"
-        p_eval = {"v0": v0, "theta": theta_deg, "y0": y0, "g": g, "pi": np.pi}
-        range_sigma = propagate_uncertainty(expr, p_eval, uncertainties)
+    
+    yield {"type": "step", "content": "Resolving polynomial coefficients for ground impact..."}
 
     t = np.linspace(0, max(t_flight, 1e-6), 120)
     x = vx * t
@@ -105,23 +99,18 @@ async def solve_projectile(params):
 
     yield {"type": "diagram", "diagram_type": "trajectory", "data": {"x": x.tolist(), "y": y.tolist()}}
 
-    steps = [
-        "### Projectile Motion Report",
-        f"**Method Used:** {params.get('method', 'governing equations').title()}",
-        f"- Initial velocity ($v_0$): {v0:.3f} m/s",
-        f"- Launch angle ($\\theta$): {theta_deg:.3f}°",
-        f"- Initial height ($y_0$): {y0:.3f} m",
-        "#### Flight Dynamics Results",
-        f"- Total flight time: {t_flight:.3f} s",
-        f"- Maximum altitude: {h_max:.3f} m",
+    ans = [
+        "### Projectile Ballistics Report",
+        "#### Governing Equations",
+        "- **Trajectory:** $y(x) = y_0 + x\\tan(\\theta) - \\frac{gx^2}{2v_0^2\\cos^2(\\theta)}$",
+        "- **Vertical Velocity:** $v_y(t) = v_0\\sin(\\theta) - gt$",
+        "\n#### Kinematic Outcomes",
+        f"- Initial elevation ($y_0$): {y0:.3f} m",
+        f"- Maximum altitude ($H_{{max}}$): {h_max:.3f} m",
+        f"- Time of flight ($t_f$): {t_flight:.3f} s",
         f"- Horizontal range ($R$): {range_x:.3f} m",
     ]
-
-    if range_sigma > 0:
-        from solvers.utils import append_uncertainty_to_final
-        steps = append_uncertainty_to_final(steps, "Horizontal Range", range_x, range_sigma, "m")
-
-    yield {"type": "final", "answer": "\n".join(steps)}
+    yield {"type": "final", "answer": "\n".join(ans)}
 
 
 async def solve_kinematics(params):

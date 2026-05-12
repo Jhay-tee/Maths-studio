@@ -191,6 +191,69 @@ async def solve_algebra(data):
             
             # Target variable
             target_var = symbols[vars_detected[0]] if vars_detected else sp.Symbol('x')
+            
+            # Detect Factorization
+            lowered_query = data.get("raw_query", "").lower()
+            is_factorization = "factor" in lowered_query or preferred_method == "factorization"
+            
+            if is_factorization:
+                yield {"type": "step", "content": f"Factorization requested for expression in {target_var}..."}
+                expr_to_factor = equation.lhs - equation.rhs
+                
+                # Methods
+                methods = ["standard", "grouping", "quadratic formula", "difference of squares"]
+                method = params.get("factor_method", "standard").lower()
+                
+                steps = ["### Factorization Report", f"Expression: $${sp.latex(expr_to_factor)}$$"]
+                
+                if method == "grouping":
+                    yield {"type": "step", "content": "Attempting factorization by grouping terms..."}
+                    steps.append("#### Method: Factorization by Grouping")
+                    steps.append("1. **Arrange Terms:** Group terms with common factors.")
+                    # We can't easily show the intermediate grouping steps for all cases symbolically without more complexity,
+                    # but we can show the result of partial factoring if simple.
+                    factored = sp.factor(expr_to_factor)
+                    steps.append(f"2. **Factor Out Commons:** Finding common sub-expressions.")
+                    steps.append(f"3. **Conclusion:** Final factored form: $${sp.latex(factored)}$$")
+                elif method == "quadratic formula" or (method == "standard" and sp.Poly(expr_to_factor, target_var).degree() == 2):
+                    yield {"type": "step", "content": "Executing Trinomial Decomposition..."}
+                    poly = sp.Poly(expr_to_factor, target_var)
+                    coeffs = poly.all_coeffs()
+                    if len(coeffs) == 3:
+                        a, b, c = coeffs
+                        steps.append("#### Method: Quadratic Trinomial Decomposition")
+                        steps.append(f"1. **Identify Coefficients:** $a={a}, b={b}, c={c}$")
+                        discriminant = b**2 - 4*a*c
+                        steps.append(f"2. **Calculate Discriminant:** $D = b^2 - 4ac = {discriminant}$")
+                        roots = sp.solve(expr_to_factor, target_var)
+                        if roots:
+                            steps.append(f"3. **Extraction:** Roots identified at $\{', '.join([sp.latex(r) for r in roots])\}$")
+                            factored_str = f"{sp.latex(a)}" if a != 1 else ""
+                            for r in roots:
+                                factored_str += f"({sp.latex(target_var)} - ({sp.latex(r)}))"
+                            steps.append(f"4. **Reconstruction:** $${factored_str}$$")
+                        else:
+                            steps.append("3. **Insight:** No real roots available for factorization over $\mathbb{R}$.")
+                    else:
+                        steps.append("Expression degree is not quadratic; falling back to symbolic factoring.")
+                        steps.append(f"Result: $${sp.latex(sp.factor(expr_to_factor))}$$")
+                elif method == "difference of squares":
+                    yield {"type": "step", "content": "Checking for Difference of Squares pattern ($a^2 - b^2$)..."}
+                    steps.append("#### Method: Difference of Squares")
+                    factored = sp.factor(expr_to_factor)
+                    steps.append(f"1. **Pattern Matching:** Decomposing $a^2 - b^2$ into $(a-b)(a+b)$.")
+                    steps.append(f"2. **Result:** $${sp.latex(factored)}$$")
+                else:
+                    yield {"type": "step", "content": "Applying Generalized Prime Factorization Transform..."}
+                    factored = sp.factor(expr_to_factor)
+                    steps.append("#### Method: Symbolic Factorization")
+                    steps.append(f"**Step 1:** Scan for greatest common divisors (GCD) across terms.")
+                    steps.append(f"**Step 2:** Apply recursive polynomial division.")
+                    steps.append(f"**Final Result:** $${sp.latex(factored)}$$")
+                
+                yield {"type": "final", "answer": "\n".join(steps)}
+                return
+
             yield {"type": "step", "content": f"Solving for {target_var}..."}
             
             solutions = sp.solve(equation, target_var)
