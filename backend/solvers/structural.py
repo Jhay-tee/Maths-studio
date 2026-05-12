@@ -26,15 +26,20 @@ async def solve_beam_advanced(params, raw):
     yield {"type": "step", "content": "Analyzing beam using equilibrium, shear, moment, and deflection relations..."}
 
     L = float(params.get("L", params.get("l", 6)))
+    if L <= 0: L = 6.0
     E = float(params.get("E", params.get("e", STEEL_YOUNGS_MODULUS)))
     I = float(params.get("I", params.get("i", 1e-4)))
     point_loads = params.get("point_loads", [])
-    if not point_loads and params.get("P") is not None:
-        point_loads = [{"P": float(params.get("P")), "a": float(params.get("a", L / 2))}]
+    if not point_loads:
+        p_val = params.get("P", params.get("F", params.get("force")))
+        if p_val is not None:
+            point_loads = [{"P": float(p_val), "a": float(params.get("a", params.get("pos", L / 2)))}]
 
     udls = params.get("udls", [])
-    if not udls and params.get("w") is not None:
-        udls = [{"w": float(params.get("w")), "start": 0.0, "end": L}]
+    if not udls:
+        w_val = params.get("w", params.get("udl"))
+        if w_val is not None:
+            udls = [{"w": float(w_val), "start": 0.0, "end": L}]
 
     total_moment_about_a = 0.0
     total_vertical_load = 0.0

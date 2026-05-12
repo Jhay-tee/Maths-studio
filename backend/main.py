@@ -126,10 +126,11 @@ STRICT EXPRESSION GUIDELINES:
 - Use explicit math like "2*x + y = 4", "sin(x)", "P/(A*E)", or "m*g".
 
 WORD PROBLEM EXTRACTION:
-- For word problems, DO NOT put text in the "expression" field. 
+- For word problems, DO NOT put the full text in the "expression" field. 
 - Extract ALL numbers and map them to standard physics/engineering keys in "parameters".
-- If the user explicitly requests a method, include it in parameters as "method".
-- If the user asks for a graph/diagram/table/matrix view, preserve that intent in problem_type or parameters.
+- CONTEXT MATTERS: If a problem is about "water bubbles" or "oil in a pipe", set domain="fluids". If it's about "beams" or "columns", set domain="structural".
+- DO NOT fallback to "algebra" just because there is an unknown. Algebra implies PURE equation solving with no physical context.
+- SPLIT multi-part questions into separate items in `sub_problems` (e.g. "Find the force AND the work done").
 - NORMALIZE ALL UNITS TO SI (meters, kilograms, seconds, Newtons, Pascals).
   - e.g. "12kN" -> 12000, "5cm" -> 0.05, "10 min" -> 600.
 - Examples: 
@@ -468,29 +469,20 @@ def sanitize_routing_result(routing: dict, user_input: str, input_type: str) -> 
     if input_type != "text":
         return routing
 
-    multi_route = build_multi_question_route(user_input)
-    if multi_route is not None:
-        return multi_route
-
-    fallback = build_fallback_route(user_input)
-    if fallback is None:
-        return routing
-
     sub_problems = routing.get("sub_problems") or []
-    if not sub_problems:
-        return fallback
+    
+    # Check if Gemini provided a confident engineering/physics classification
+    # If Gemini failed or was extremely non-specific, try the rule-based fallbacks
+    is_vague = not sub_problems or all(p.get("confidence", 0) < 0.3 for p in sub_problems)
+    
+    if is_vague:
+        multi_route = build_multi_question_route(user_input)
+        if multi_route is not None:
+            return multi_route
 
-    lowered = (user_input or "").lower()
-    if any(keyword in lowered for keyword in ["plot", "graph"]) and "=" in user_input:
-        return fallback
-    if "deflection values" in lowered and "plot" in lowered:
-        return fallback
-    if any(keyword in lowered for keyword in ["book", "table", "friction", "normal force"]):
-        return fallback
-    if any(keyword in lowered for keyword in ["pressure at the bottom", "bubble", "vegetable oil", "hole at the bottom", "hydrostatic"]):
-        return fallback
-    if "=" in user_input and not any(keyword in lowered for keyword in ["plot", "graph"]):
-        return fallback
+        fallback = build_fallback_route(user_input)
+        if fallback:
+            return fallback
 
     return routing
 

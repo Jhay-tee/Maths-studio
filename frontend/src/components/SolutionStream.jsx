@@ -49,137 +49,79 @@ export default function SolutionStream({ steps, final, error, isStreaming }) {
   if (!hasContent) return null;
 
   return (
-    <div className="space-y-8">
-      {/* ── Step log ── */}
-      {visibleSteps.length > 0 && (
-        <div className="space-y-5">
-          <div className="flex items-center gap-2 text-white/35">
-            <BookOpenText className="w-4 h-4" />
-            <p className="text-[10px] font-black uppercase tracking-[0.3em]">
-              Step By Step
-            </p>
-          </div>
-          <AnimatePresence mode="popLayout">
-            {visibleSteps.map((step, i) => {
-              const isLast = i === visibleSteps.length - 1;
-              return (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className="flex items-start gap-4 group rounded-3xl border border-white/10 bg-gradient-to-br from-white/[0.06] to-white/[0.02] px-5 py-4 shadow-[0_20px_60px_rgba(0,0,0,0.18)]"
-                >
-                  <div className="mt-0.5 shrink-0 flex items-center gap-3">
-                    <div className={`flex h-7 w-7 items-center justify-center rounded-full border text-[11px] font-black ${
-                      isLast && isStreaming ? 'border-blue-400/40 bg-blue-400/10 text-blue-200' : 'border-white/10 bg-white/5 text-white/55'
-                    }`}>
-                      {i + 1}
-                    </div>
-                  </div>
-                  <div
-                    className={`text-sm tracking-tight transition-colors ${
-                      isLast && isStreaming ? 'text-white/94' : 'text-white/76'
-                    } markdown-content`}
-                  >
-                    <ReactMarkdown 
-                      remarkPlugins={[remarkMath]}
-                      components={markdownComponents}
-                      rehypePlugins={[rehypeKatex]}
-                    >
-                      {step}
-                    </ReactMarkdown>
-                  </div>
-                </motion.div>
-              );
-            })}
-          </AnimatePresence>
-
-          {isStreaming && !visibleFinal && !error && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="flex items-center gap-3 pl-1"
-            >
-              <CircleDashed className="w-4 h-4 text-blue-300/50 animate-spin shrink-0" />
-              <p className="text-[11px] font-mono text-white/35 uppercase tracking-[0.28em]">
-                Processing
-              </p>
-            </motion.div>
-          )}
-        </div>
-      )}
-
-      {/* ── Error panel ── */}
-      <AnimatePresence>
-        {error && (
+    <div className="space-y-6">
+      {/* ── Conversational Flow ── */}
+      <AnimatePresence mode="popLayout">
+        {visibleSteps.map((step, i) => (
           <motion.div
-            initial={{ opacity: 0, scale: 0.97 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0 }}
-            className="bg-red-500/10 border border-red-500/25 p-5 rounded-3xl flex items-start gap-3 shadow-[0_12px_40px_rgba(127,29,29,0.18)]"
+            key={`step-${i}`}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-white/80 leading-relaxed markdown-content prose prose-invert max-w-none prose-sm md:prose-base"
           >
-            <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-            <div className="space-y-1 min-w-0">
-              <h4 className="text-[9px] font-black uppercase tracking-widest text-red-400">
-                Operation Failed
-              </h4>
-              <p className="text-sm text-red-400/80 break-words">
-                {error?.message ?? String(error)}
-              </p>
+            <ReactMarkdown 
+              remarkPlugins={[remarkMath]}
+              components={markdownComponents}
+              rehypePlugins={[rehypeKatex]}
+            >
+              {step}
+            </ReactMarkdown>
+            {i < visibleSteps.length - 1 && <div className="h-px w-8 bg-white/5 my-6" />}
+          </motion.div>
+        ))}
+      </AnimatePresence>
+
+      {/* ── Final content (interleaved) ── */}
+      <AnimatePresence>
+        {visibleFinal && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.99 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="mt-4 pt-6 border-t border-white/10"
+          >
+            <div className="flex items-center gap-2 mb-6">
+              <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400/60">Verified Result</span>
+            </div>
+            
+            <div className="math-render text-white text-[15px] md:text-base leading-relaxed overflow-x-auto">
+              <ReactMarkdown 
+                remarkPlugins={[remarkMath]}
+                components={markdownComponents}
+                rehypePlugins={[rehypeKatex]}
+              >
+                {visibleFinal}
+              </ReactMarkdown>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* ── Final answer panel ── */}
+      {/* ── Status indicator ── */}
+      {isStreaming && !visibleFinal && !error && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="flex items-center gap-3 py-4"
+        >
+          <div className="flex gap-1">
+            <motion.div animate={{ scale: [1, 1.5, 1] }} transition={{ repeat: Infinity, duration: 1, delay: 0 }} className="h-1.5 w-1.5 rounded-full bg-white/20" />
+            <motion.div animate={{ scale: [1, 1.5, 1] }} transition={{ repeat: Infinity, duration: 1, delay: 0.2 }} className="h-1.5 w-1.5 rounded-full bg-white/20" />
+            <motion.div animate={{ scale: [1, 1.5, 1] }} transition={{ repeat: Infinity, duration: 1, delay: 0.4 }} className="h-1.5 w-1.5 rounded-full bg-white/20" />
+          </div>
+        </motion.div>
+      )}
+
+      {/* ── Error panel (Simplified) ── */}
       <AnimatePresence>
-        {visibleFinal && (
+        {error && (
           <motion.div
-            initial={{ opacity: 0, y: 16 }}
+            initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-            className="bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] border border-white/10 p-6 md:p-9 rounded-[2rem] shadow-[0_24px_80px_rgba(0,0,0,0.24)] space-y-7 overflow-hidden"
+            className="bg-red-500/5 rounded-2xl p-5 border border-red-500/20 text-red-400 text-sm flex gap-3"
           >
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/12 border border-emerald-400/20">
-                  <Sigma className="w-4 h-4 text-emerald-300/80" />
-                </div>
-                <div>
-                  <h4 className="text-[10px] font-black uppercase tracking-[0.28em] text-white/45">
-                    Final Answer
-                  </h4>
-                  <p className="text-sm text-white/55 mt-1">Clean result with the main working and conclusion.</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
-                <span className="text-[9px] font-bold uppercase tracking-[0.22em] text-emerald-300">
-                  Verified
-                </span>
-              </div>
-            </div>
-
-            <div className="rounded-[1.5rem] border border-white/8 bg-black/15 p-5 md:p-6">
-              <div className="text-[15px] md:text-base leading-relaxed text-white max-w-none math-render overflow-x-auto">
-                <ReactMarkdown 
-                  remarkPlugins={[remarkMath]}
-                  components={markdownComponents}
-                  rehypePlugins={[rehypeKatex]}
-                >
-                  {visibleFinal}
-                </ReactMarkdown>
-              </div>
-            </div>
-
-            {!error && !isStreaming && (
-              <div className="flex items-center gap-2 text-white/35">
-                <FlaskConical className="w-3.5 h-3.5" />
-                <span className="text-[10px] uppercase tracking-[0.22em]">Solver output completed</span>
-              </div>
-            )}
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{error?.message ?? String(error)}</span>
           </motion.div>
         )}
       </AnimatePresence>

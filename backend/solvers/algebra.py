@@ -29,13 +29,19 @@ async def solve_algebra(data):
         symbols = {v: sp.Symbol(v) for v in vars_to_use}
         
         # Check for multiple equations (simultaneous)
-        # Often separated by comma, semicolon, or newline
-        delimiters = [",", ";", "\n"]
+        # Often separated by comma, semicolon, newline, or " and "
+        delimiters = [";", "\n", " and "]
         equations_raw = [expr_str]
         for d in delimiters:
-            if d in expr_str:
-                equations_raw = [e.strip() for e in expr_str.split(d) if e.strip()]
+            if d.lower() in expr_str.lower():
+                # Correctly split while ignoring case for " and "
+                pattern = re.compile(re.escape(d), re.IGNORECASE)
+                equations_raw = [e.strip() for e in pattern.split(expr_str) if e.strip()]
                 break
+        
+        # If still only one, check for comma delimiter but only if there are equals signs
+        if len(equations_raw) == 1 and "," in expr_str and expr_str.count("=") > 1:
+            equations_raw = [e.strip() for e in expr_str.split(",") if e.strip()]
         
         # Detect Matrix Operations
         if "[" in expr_str and "]" in expr_str:
@@ -107,29 +113,57 @@ async def solve_algebra(data):
                     eqs.append(sp.Eq(safe_sympify(eq_text, symbols=symbols), 0))
             
             yield {"type": "step", "content": "Solving system of equations..."}
+            
+            # Symbolic solving is good, but let's try to explain a step if it's 2x2
+            system_steps = ["### Simultaneous Equations Resolution", f"**Method Used:** {preferred_method.title()}"]
+            system_steps.append("#### Given System:")
+            for eq in eqs:
+                system_steps.append(f"- $${sp.latex(eq)}$$")
+            
+            if len(eqs) == 2 and len(symbols) == 2:
+                yield {"type": "step", "content": "Using substitution/elimination method for 2x2 system..."}
+                system_steps.append("#### Steps for 2x2 System:")
+                var_list = list(symbols.values())
+                v1, v2 = var_list[0], var_list[1]
+                
+                # Try to isolate v1 in first eq
+                try:
+                    iso_sols = sp.solve(eqs[0], v1)
+                    if iso_sols:
+                        iso_expr = iso_sols[0]
+                        system_steps.append(f"1. Isolate ${sp.latex(v1)}$ from the first equation: $${sp.latex(v1)} = {sp.latex(iso_expr)}$$")
+                        # Substitute into second eq
+                        subbed_eq = eqs[1].subs(v1, iso_expr)
+                        system_steps.append(f"2. Substitute this expression into the second equation: $${sp.latex(subbed_eq)}$$")
+                        # Solve for v2
+                        v2_sols = sp.solve(subbed_eq, v2)
+                        if v2_sols:
+                            v2_val = v2_sols[0]
+                            system_steps.append(f"3. Solve for ${sp.latex(v2)}$: $${sp.latex(v2)} = {sp.latex(v2_val)}$$")
+                            # Back substitute
+                            final_v1 = iso_expr.subs(v2, v2_val)
+                            system_steps.append(f"4. Back-substitute ${sp.latex(v2)}$ to find ${sp.latex(v1)}$: $${sp.latex(v1)} = {sp.latex(final_v1)}$$")
+                except Exception:
+                    system_steps.append("Proceeding with standard matrix/symbolic resolution for complex system.")
+
             sol_dict = sp.solve(eqs, list(symbols.values()))
             
-            steps = ["### Simultaneous Equations Resolution", f"**Method Used:** {preferred_method.title()}"]
-            steps.append("#### Given System:")
-            for eq in eqs:
-                steps.append(f"- $${sp.latex(eq)}$$")
-            
-            steps.append("#### Solutions:")
+            system_steps.append("#### Final Solutions:")
             if not sol_dict:
-                steps.append("No solution found for the given system.")
+                system_steps.append("No solution found for the given system.")
             elif isinstance(sol_dict, dict):
                 for var, val in sol_dict.items():
-                    steps.append(f"- $${sp.latex(var)} = {sp.latex(val)}$$")
+                    system_steps.append(f"- $${sp.latex(var)} = {sp.latex(val)}$$")
             elif isinstance(sol_dict, list):
                 if len(sol_dict) > 0 and isinstance(sol_dict[0], tuple):
                     for idx, sol_tuple in enumerate(sol_dict):
-                        steps.append(f"**Set {idx+1}:**")
+                        system_steps.append(f"**Set {idx+1}:**")
                         for var, val in zip(symbols.values(), sol_tuple):
-                            steps.append(f"- $${sp.latex(var)} = {sp.latex(val)}$$")
+                            system_steps.append(f"- $${sp.latex(var)} = {sp.latex(val)}$$")
                 else:
-                    steps.append(f"Result: $${sp.latex(sol_dict)}$$")
+                    system_steps.append(f"Result: $${sp.latex(sol_dict)}$$")
             
-            yield {"type": "final", "answer": "\n".join(steps)}
+            yield {"type": "final", "answer": "\n".join(system_steps)}
 
         else:
             # Single equation: Check for Quadratic or higher polynomial

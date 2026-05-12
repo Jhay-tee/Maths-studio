@@ -15,10 +15,15 @@ MATH_TRANSFORMATIONS = standard_transformations + (
 def clean_math_string(s):
     """
     Strips common natural language words often left by LLM or user.
+    Handles lists by joining with semi-colons.
     """
-    if not s: return ""
+    if s is None: return ""
     
-    # Common prefixes to strip
+    if isinstance(s, list):
+        # Join with a distinct separator
+        s = " ; ".join(str(item) for item in s)
+    
+    # Common prefixes to strip - expanded to catch common LLM boilerplate
     prefixes = [
         r"solve (the )?(linear |quadratic )?equation",
         r"calculate (the )?",
@@ -31,24 +36,36 @@ def clean_math_string(s):
         r"plot (the )?",
         r"what is (the )?",
         r"result in",
-        r"equation[:\s]*",
-        r"expression[:\s]*",
+        r"equation(s?)[:\s]*",
+        r"expression(s?)[:\s]*",
+        r"solution(s?)[:\s]*",
+        r"result(s?)[:\s]*",
+        r"answer(s?)[:\s]*",
+        r"ans[:\s]*",
+        r"symbolic solution[:\s]*",
+        r"step-by-step solution[:\s]*",
     ]
     
-    clean = s.strip()
-    # Remove surrounding quotes if model added them
-    if (clean.startswith("'") and clean.endswith("'")) or (clean.startswith('"') and clean.endswith('"')):
+    clean = str(s).strip()
+    # Remove surrounding quotes or backticks if model added them
+    if (clean.startswith("'") and clean.endswith("'")) or (clean.startswith('"') and clean.endswith('"')) or (clean.startswith('`') and clean.endswith('`')):
         clean = clean[1:-1]
         
     for p in prefixes:
-        clean = re.sub(p, "", clean, flags=re.IGNORECASE).strip()
+        # Use word boundaries and ignore case
+        p_pattern = r"^\s*" + p
+        clean = re.sub(p_pattern, "", clean, flags=re.IGNORECASE).strip()
         
+    # Remove common boilerplate at the end
+    clean = re.split(r"\s+and\s+solve", clean, flags=re.IGNORECASE)[0]
+    clean = re.split(r"\s+and\s+plot", clean, flags=re.IGNORECASE)[0]
+    
     # If "y = f(x) from x=... to x=..."
     # We want to stop at "from"
     if " from " in clean.lower():
         clean = re.split(r"\s+from\s+", clean, flags=re.IGNORECASE)[0].strip()
         
-    return clean
+    return clean.strip()
 
 def safe_sympify(expr_str, symbols=None):
     """

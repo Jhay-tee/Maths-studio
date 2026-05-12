@@ -82,7 +82,7 @@ export default function MessageBubble({ msg, onDelete }) {
           </div>
         ) : (
           <div className="w-full">
-            <div className={`p-1 rounded-3xl ${msg.isProcessing ? 'opacity-85' : ''}`}>
+            <div className={`${msg.isProcessing ? 'opacity-85' : ''}`}>
               <SessionView 
                 currentSteps={msg.steps || []}
                 currentFinal={msg.final}

@@ -53,8 +53,8 @@ export default function ChatInput({
   };
 
   return (
-    <div className="max-w-4xl mx-auto w-full transition-all duration-300">
-      <div className="relative bg-[#1a1a1a] border border-white/5 rounded-[24px] shadow-2xl p-2 flex flex-col transition-all focus-within:border-white/10">
+    <div className="w-full transition-all duration-300">
+      <div className="relative bg-[#0b0b0b]/80 border border-white/10 rounded-[28px] shadow-[0_30px_100px_rgba(0,0,0,0.8)] p-2.5 flex flex-col transition-all focus-within:border-white/20 backdrop-blur-3xl">
         
         <AnimatePresence>
           {(imagePreview || dataFile) && (
@@ -73,7 +73,7 @@ export default function ChatInput({
                       alt="Preview" 
                     />
                   ) : (
-                    <div className="w-20 h-20 bg-blue-500/10 rounded-xl border border-blue-500/20 flex flex-col items-center justify-center p-2 text-center">
+                    <div className="w-20 h-20 bg-blue-500/10 rounded-xl border border-blue-500/20 flex flex-col items-center justify-center p-2 text-center overflow-hidden">
                       <ImageIcon className="w-6 h-6 text-blue-400 mb-1" />
                       <span className="text-[8px] font-mono text-blue-400 truncate w-full px-2">{dataFile?.name}</span>
                     </div>
@@ -103,26 +103,6 @@ export default function ChatInput({
                       </div>
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-white/40">Graph Title</label>
-                      <input 
-                        type="text" 
-                        placeholder="Optional Title..."
-                        value={plotConfig.title}
-                        onChange={(e) => setPlotConfig({...plotConfig, title: e.target.value})}
-                        className="w-full bg-white/5 border-0 focus:ring-1 focus:ring-white/20 rounded-lg p-2 text-[10px] text-white placeholder:text-white/10"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-white/40">X-Axis Label</label>
-                      <input 
-                        type="text" 
-                        placeholder="Strain (ε)..."
-                        value={plotConfig.xlabel}
-                        onChange={(e) => setPlotConfig({...plotConfig, xlabel: e.target.value})}
-                        className="w-full bg-white/5 border-0 focus:ring-1 focus:ring-white/20 rounded-lg p-2 text-[10px] text-white placeholder:text-white/10"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
                       <label className="text-[9px] font-black uppercase tracking-widest text-white/40">Y-Axis Label</label>
                       <input 
                         type="text" 
@@ -139,12 +119,12 @@ export default function ChatInput({
           )}
         </AnimatePresence>
 
-        <div className="flex items-end gap-2 px-2">
+        <div className="flex items-center gap-2 px-1">
           <button 
             onClick={() => fileInputRef.current?.click()}
-            className="p-3 hover:bg-white/5 text-white/40 hover:text-white rounded-full transition-all mb-1"
+            className="p-3.5 hover:bg-white/5 text-white/30 hover:text-white rounded-full transition-all"
           >
-            <Plus className="w-6 h-6" />
+            <Plus className="w-5 h-5" />
           </button>
           
           <input 
@@ -156,8 +136,8 @@ export default function ChatInput({
           />
 
           <textarea
-            className="flex-1 bg-transparent border-0 focus:ring-0 focus:outline-none text-base font-medium p-4 max-h-[150px] min-h-[56px] resize-none placeholder:text-white/20 select-none shadow-none"
-            placeholder="Describe your engineering problem..."
+            className="flex-1 bg-transparent border-0 focus:ring-0 focus:outline-none text-[15px] font-medium p-4 max-h-[200px] min-h-[56px] resize-none placeholder:text-white/20 select-none shadow-none leading-relaxed"
+            placeholder="Compute your next engineering challenge..."
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -167,21 +147,21 @@ export default function ChatInput({
           {isProcessing ? (
             <button
               onClick={onStop}
-              className="p-3 rounded-full transition-all mb-1 bg-red-500 text-white hover:scale-105 active:scale-95 shadow-xl"
+              className="p-4 rounded-full transition-all bg-white text-black hover:bg-white/90 active:scale-95 shadow-2xl"
             >
-              <Square className="w-5 h-5" />
+              <Square className="w-5 h-5 fill-current" />
             </button>
           ) : (
             <button 
               onClick={handleCompute}
               disabled={!inputText.trim() && !imagePreview && !dataFile}
-              className={`p-3 rounded-full transition-all mb-1 ${
+              className={`p-4 rounded-full transition-all ${
                 (!inputText.trim() && !imagePreview && !dataFile)
-                ? 'bg-white/5 text-white/10 cursor-not-allowed'
-                : 'bg-white text-black hover:scale-105 active:scale-95 shadow-xl'
+                ? 'text-white/10 cursor-not-allowed'
+                : 'bg-white text-black hover:scale-105 active:scale-95 shadow-2xl'
               }`}
             >
-              <Send className="w-5 h-5" />
+              <Send className="w-5 h-5 fill-current" />
             </button>
           )}
         </div>

@@ -22,7 +22,7 @@ def _coerce_plot_values(values, x_vals):
 
 
 def _extract_inline_series(raw_query):
-    text = (raw_query or "").strip()
+    text = clean_math_string(raw_query)
     if not text:
         return None
 
@@ -65,36 +65,78 @@ async def solve_function_plot(sub):
             break
             
     try:
+        # Detect multiple equations if passed as one string
+        sub_exprs = [expr_str]
+        for delim in [" and ", ";", "\n", ", "]:
+            if delim in expr_str.lower():
+                sub_exprs = [e.strip() for e in re.split(delim, expr_str, flags=re.IGNORECASE) if e.strip()]
+                break
+        
+        # Pick the best equation to plot (one with an equals sign and variables)
+        plot_eq = sub_exprs[0]
+        for e in sub_exprs:
+            if "=" in e and any(c.isalpha() for c in e):
+                plot_eq = e
+                break
+
         x_sym = sp.Symbol(var_name)
-        symbol_names = sorted(set(re.findall(r"[A-Za-z_]\w*", expr_str or "")) | {var_name})
+        symbol_names = sorted(set(re.findall(r"[A-Za-z_]\w*", plot_eq or "")) | {var_name})
         symbol_map = {name: sp.Symbol(name) for name in symbol_names}
 
-        if "=" in expr_str:
-            lhs_text, rhs_text = [part.strip() for part in expr_str.split("=", 1)]
+        if "=" in plot_eq:
+            lhs_text, rhs_text = [part.strip() for part in plot_eq.split("=", 1)]
             lhs = safe_sympify(lhs_text, symbols=symbol_map)
             rhs = safe_sympify(rhs_text, symbols=symbol_map)
             equation = sp.Eq(lhs, rhs)
             free_symbols = sorted(equation.free_symbols, key=lambda sym: sym.name)
 
             dependent_var = None
+            # Prioritize y as dependent variable
             if sp.Symbol("y") in free_symbols:
                 dependent_var = sp.Symbol("y")
-            elif len(free_symbols) == 2 and x_sym in free_symbols:
-                dependent_var = next(sym for sym in free_symbols if sym != x_sym)
-
+            elif len(free_symbols) >= 2:
+                # Pick the first non-x symbol
+                dependent_var = next((sym for sym in free_symbols if sym != x_sym), None)
+            
             if dependent_var is not None:
                 solutions = sp.solve(equation, dependent_var)
                 if not solutions:
-                    raise ValueError("Could not isolate the dependent variable for plotting.")
-                func_expr = solutions[0]
-                ylabel = dependent_var.name
-                caption_expr = f"{dependent_var} = {sp.sstr(func_expr)}"
+                    # Try solving for x if y failed
+                    solutions = sp.solve(equation, x_sym)
+                    if solutions:
+                        # We solved for x = f(y), but we want y = f(x) for plotting
+                        # This is inverse, usually we just want to plot. 
+                        # Let's just swap them for the sake of plotting if possible.
+                        func_expr = solutions[0]
+                        ylabel = x_sym.name
+                        x_sym = dependent_var
+                        var_name = dependent_var.name
+                    else:
+                        raise ValueError("Could not isolate any variable for plotting.")
+                else:
+                    func_expr = solutions[0]
+                    ylabel = dependent_var.name
+                
+                caption_expr = f"{ylabel} = {sp.sstr(func_expr)}"
             else:
-                raise ValueError("This equation cannot be plotted as a single-valued function yet.")
+                # No dependent var found, maybe it's something like "x^2 + y^2 = 25"
+                # For now, let's just use the lhs - rhs as the function if it's f(x) = 0
+                func_expr = lhs - rhs
+                ylabel = "f(x)"
+                caption_expr = plot_eq
         else:
-            func_expr = safe_sympify(expr_str, symbols=symbol_map)
+            func_expr = safe_sympify(plot_eq, symbols=symbol_map)
             ylabel = f"f({var_name})"
-            caption_expr = expr_str
+            caption_expr = plot_eq
+
+        # Ensure func_expr only contains the independent variable
+        if hasattr(func_expr, "free_symbols"):
+            other_symbols = [s for s in func_expr.free_symbols if s != x_sym]
+            if other_symbols:
+                # If there are other symbols, they might be constants or parameters.
+                # Try to substitute standard defaults or 1.0
+                for sym in other_symbols:
+                    func_expr = func_expr.subs(sym, 1.0) # Fallback to 1.0 for unknown params in plot
 
         f_lambdified = sp.lambdify(x_sym, func_expr, "numpy")
         
