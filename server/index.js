@@ -14,12 +14,12 @@ const PORT = 3000;
 
 // Rate limiting: Track requests by IP
 const ipRequests = new Map();
-const RATE_LIMIT_WINDOW = 1000; // 1 second
-const RATE_LIMIT_MAX = 2; // Max 2 requests per second
-const BLOCK_DURATION = 5000; // Block for 5 seconds if exceeded
+const RATE_LIMIT_WINDOW = 60000; // 1 minute
+const RATE_LIMIT_MAX = 60; // Max 60 requests per minute
+const BLOCK_DURATION = 10000; // Block for 10 seconds if exceeded
 
 const rateLimiter = (req, res, next) => {
-  const ip = req.ip || req.connection.remoteAddress;
+  const ip = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown';
   const now = Date.now();
 
   if (!ipRequests.has(ip)) {
@@ -30,6 +30,7 @@ const rateLimiter = (req, res, next) => {
 
   // Check if IP is currently blocked
   if (record.blockedUntil > now) {
+    console.warn(`[RateLimit] Blocked request from ${ip}`);
     return res.status(429).json({
       error: 'Too many requests. Please wait before trying again.',
       retryAfter: Math.ceil((record.blockedUntil - now) / 1000)
@@ -41,10 +42,11 @@ const rateLimiter = (req, res, next) => {
 
   // Check if exceeded limit
   if (record.requests.length >= RATE_LIMIT_MAX) {
+    console.warn(`[RateLimit] IP ${ip} exceeded limit (${RATE_LIMIT_MAX}/${RATE_LIMIT_WINDOW}ms). Blocking...`);
     record.blockedUntil = now + BLOCK_DURATION;
     return res.status(429).json({
-      error: 'Rate limit exceeded. Request blocked for 5 seconds.',
-      retryAfter: 5
+      error: 'Rate limit exceeded. Request blocked for 10 seconds.',
+      retryAfter: 10
     });
   }
 
@@ -77,19 +79,29 @@ async function startServer() {
 
   // Start Python FastAPI background process
   const startPython = (cmd) => {
-    console.log(`Attempting to start Python backend with: ${cmd}`);
-    const proc = spawn(cmd, [path.join(__dirname, '../backend/main.py')], { shell: true });
+    console.log(`[Server] Attempting to start Python backend with command: ${cmd}`);
+    const proc = spawn(cmd, ['-u', path.join(__dirname, '../backend/main.py')], { 
+      shell: true,
+      env: { ...process.env, PYTHONUNBUFFERED: '1', PORT: '9999' }
+    });
     
-    proc.stdout.on('data', (data) => console.log(`[FastAPI]: ${data}`));
-    proc.stderr.on('data', (data) => console.error(`[FastAPI Error]: ${data}`));
+    proc.stdout.on('data', (data) => console.log(`[FastAPI]: ${data.toString().trim()}`));
+    proc.stderr.on('data', (data) => console.error(`[FastAPI Error]: ${data.toString().trim()}`));
     
     proc.on('error', (err) => {
-      console.error(`Failed to start Python (${cmd}):`, err);
-      if (cmd === 'python3') startPython('python');
+      console.error(`[Server] Failed to start Python (${cmd}):`, err);
+      if (cmd === 'python3') {
+        console.log('[Server] Falling back to "python"...');
+        startPython('python');
+      }
     });
 
     proc.on('exit', (code) => {
-      console.log(`Python process (${cmd}) exited with code ${code}`);
+      console.log(`[Server] Python process (${cmd}) exited with code ${code}`);
+      if (code !== 0) {
+        console.log('[Server] Restarting Python backend in 5 seconds...');
+        setTimeout(() => startPython(cmd), 5000);
+      }
     });
 
     return proc;

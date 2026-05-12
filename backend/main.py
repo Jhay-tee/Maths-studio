@@ -578,7 +578,7 @@ def select_solver(domain: str, problem_type: str):
 async def health():
     return {"status": "healthy", "service": "studio-kernel"}
 
-@app.post("/solve")
+@app.post("/api/compute/solve")
 async def solve(request: Request):
     acquired_slot = False
     try:
@@ -769,6 +769,14 @@ async def solve(request: Request):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
+# Serves the frontend if built
+current_dir = os.path.dirname(os.path.abspath(__file__))
+frontend_dist = os.path.abspath(os.path.join(current_dir, "..", "frontend", "dist"))
+if os.path.exists(frontend_dist):
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="static")
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=9999)
+    port = int(os.environ.get("PORT", 3000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

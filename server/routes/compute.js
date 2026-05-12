@@ -11,7 +11,7 @@ router.post('/', async (req, res) => {
     res.setHeader('Connection', 'keep-alive');
 
     try {
-        const response = await fetch('http://localhost:9999/solve', {
+        const response = await fetch('http://127.0.0.1:9999/api/compute/solve', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -19,12 +19,15 @@ router.post('/', async (req, res) => {
 
         if (!response.ok) {
             const errBody = await response.text();
-            console.error(`Backend Error (${response.status}):`, errBody);
+            console.error(`[Proxy] Backend Error (${response.status}):`, errBody);
             try {
                 const jsonErr = JSON.parse(errBody);
                 throw new Error(`Engine Error: ${jsonErr.error || jsonErr.message || errBody}`);
             } catch (e) {
-                throw new Error(`Backend responded with ${response.status}: ${errBody}`);
+                // If it's not JSON, it might be a generic error
+                if (response.status === 404) throw new Error('Solver endpoint not found.');
+                if (response.status === 502 || response.status === 503) throw new Error('Solver engine is currently starting or unavailable.');
+                throw new Error(`Backend responded with ${response.status}: ${errBody.substring(0, 100)}`);
             }
         }
 

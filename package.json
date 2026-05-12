@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node server/index.js",
-    "start": "node server/index.js",
+    "start": "python3 backend/main.py",
     "build": "cd frontend && npm install && npm run build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
