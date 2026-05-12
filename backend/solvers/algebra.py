@@ -1,7 +1,7 @@
 import asyncio
 import sympy as sp
 import re
-from solvers.utils import safe_sympify, clean_math_string
+from solvers.utils import safe_sympify, clean_math_string, simplify_math, detect_variables
 
 async def solve_algebra(data):
     yield {"type": "step", "content": "Initializing Algebra Engine..."}
@@ -19,14 +19,13 @@ async def solve_algebra(data):
     
     try:
         # Detect all alphabetical variables, preserving case
-        all_potential = set(re.findall(r'[a-zA-Z]', expr_str))
-        # Exclude common single-letter constants if they are alone (e, i, d)
-        # But for algebra, we usually want to keep them.
-        vars_to_use = sorted(list(all_potential))
-        if not vars_to_use:
-            vars_to_use = ["x"]
+        vars_detected = detect_variables(expr_str)
+        if not vars_detected:
+            vars_detected = ["x"]
         
-        symbols = {v: sp.Symbol(v) for v in vars_to_use}
+        yield {"type": "step", "content": f"Variables identified: {', '.join(vars_detected)}"}
+        
+        symbols = {v: sp.Symbol(v) for v in vars_detected}
         
         # Check for multiple equations (simultaneous)
         # Often separated by comma, semicolon, newline, or " and "
@@ -106,8 +105,8 @@ async def solve_algebra(data):
                 eq_text = clean_math_string(eq_text)
                 if "=" in eq_text:
                     parts = eq_text.split("=", 1)
-                    lhs = safe_sympify(parts[0], symbols=symbols)
-                    rhs = safe_sympify(parts[1], symbols=symbols)
+                    lhs = simplify_math(safe_sympify(parts[0], symbols=symbols))
+                    rhs = simplify_math(safe_sympify(parts[1], symbols=symbols))
                     eqs.append(sp.Eq(lhs, rhs))
                 else:
                     eqs.append(sp.Eq(safe_sympify(eq_text, symbols=symbols), 0))
@@ -170,8 +169,8 @@ async def solve_algebra(data):
             eq_text = clean_math_string(equations_raw[0])
             if "=" in eq_text:
                 parts = eq_text.split("=", 1)
-                lhs = safe_sympify(parts[0], symbols=symbols)
-                rhs = safe_sympify(parts[1], symbols=symbols)
+                lhs = simplify_math(safe_sympify(parts[0], symbols=symbols))
+                rhs = simplify_math(safe_sympify(parts[1], symbols=symbols))
                 equation = sp.Eq(lhs, rhs)
             else:
                 equation = sp.Eq(safe_sympify(eq_text, symbols=symbols), 0)

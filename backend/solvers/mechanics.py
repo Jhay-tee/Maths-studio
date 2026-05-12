@@ -1,6 +1,7 @@
 import asyncio
 import numpy as np
 from solvers.constants import G
+from solvers.utils import normalize_params, validate_physical_params
 
 
 def series_points(x_values, y_values):
@@ -16,10 +17,20 @@ def _extract_first_number(text, fallback=None):
 async def solve_mechanics(data):
     yield {"type": "step", "content": "Initializing Classical Mechanics Kernel..."}
 
-    params = data.get("parameters", {})
+    params = normalize_params(data.get("parameters", {}))
+    
+    # Physical validation
+    is_valid, err = validate_physical_params(params)
+    if not is_valid:
+        yield {"type": "error", "message": err}
+        return
+
     pt = data.get("problem_type", "").lower()
     raw = data.get("raw_query", "").lower()
-    params["method"] = data.get("requested_method") or params.get("method") or "governing equations"
+    # Display variables used
+    used_vars = [k for k in params.keys() if params[k] is not None]
+    if used_vars:
+        yield {"type": "step", "content": f"Parameters detected: {', '.join(used_vars)}"}
 
     try:
         if "projectile" in pt or "projectile" in raw:

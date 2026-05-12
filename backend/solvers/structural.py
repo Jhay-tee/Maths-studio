@@ -1,15 +1,29 @@
 import numpy as np
 from solvers.constants import STEEL_YOUNGS_MODULUS
-
+from solvers.utils import normalize_params, validate_physical_params
 
 def series_points(x_values, y_values):
     return [{"x": float(x), "y": float(y)} for x, y in zip(x_values, y_values)]
 
 
 async def solve_structural(sub: dict):
-    params = sub.get("parameters", {})
+    yield {"type": "step", "content": "Initializing Structural Analysis Engine..."}
+    
+    params = normalize_params(sub.get("parameters", {}))
+    
+    # Physical validation
+    is_valid, err = validate_physical_params(params)
+    if not is_valid:
+        yield {"type": "error", "message": err}
+        return
+
     raw = sub.get("raw_query", "").lower()
     pt = sub.get("problem_type", "").lower()
+    
+    # Display variables used
+    used_vars = [k for k in params.keys() if params[k] is not None]
+    if used_vars:
+        yield {"type": "step", "content": f"Parameters detected: {', '.join(used_vars)}"}
 
     if any(keyword in pt or keyword in raw for keyword in ["axial", "stress", "strain", "bar"]):
         async for chunk in solve_axial_member(params):

@@ -9,7 +9,7 @@ import numpy as np
 from sklearn.metrics import r2_score
 import sympy as sp
 import re
-from solvers.utils import clean_math_string, safe_sympify
+from solvers.utils import clean_math_string, safe_sympify, simplify_math, detect_variables
 
 
 def _coerce_plot_values(values, x_vals):
@@ -129,29 +129,58 @@ async def solve_function_plot(sub):
             ylabel = f"f({var_name})"
             caption_expr = plot_eq
 
+        # Simplify the function before plotting
+        func_expr = simplify_math(func_expr)
+        
         # Ensure func_expr only contains the independent variable
-        if hasattr(func_expr, "free_symbols"):
-            other_symbols = [s for s in func_expr.free_symbols if s != x_sym]
-            if other_symbols:
-                # If there are other symbols, they might be constants or parameters.
-                # Try to substitute standard defaults or 1.0
-                for sym in other_symbols:
-                    func_expr = func_expr.subs(sym, 1.0) # Fallback to 1.0 for unknown params in plot
-
-        f_lambdified = sp.lambdify(x_sym, func_expr, "numpy")
+        # But wait, what if it's 3D?
+        free_symbols = [s for s in func_expr.free_symbols]
+        independent_vars = [s for s in free_symbols if s.name in [var_name, "x", "y", "t"]]
         
-        x_vals = np.linspace(x_min, x_max, 500)
-        y_vals = _coerce_plot_values(f_lambdified(x_vals), x_vals)
-        
-        plt.figure(figsize=(10, 6))
-        plt.plot(x_vals, y_vals, color='#3b82f6', linewidth=2)
-        plt.axhline(0, color='white', linewidth=0.5, alpha=0.3)
-        plt.axvline(0, color='white', linewidth=0.5, alpha=0.3)
-        plt.grid(True, linestyle='--', alpha=0.2)
-        plt.title(f"Plot of ${sp.latex(func_expr)}$")
-        plt.xlabel(var_name)
-        plt.ylabel(ylabel)
-        plt.style.use('dark_background')
+        if len(independent_vars) >= 2:
+            # 3D Plot logic
+            yield {"type": "step", "content": "Detecting multivariable function. Generating 3D surface plot..."}
+            v1, v2 = independent_vars[0], independent_vars[1]
+            f_3d = sp.lambdify((v1, v2), func_expr, "numpy")
+            
+            x_mesh = np.linspace(x_min, x_max, 50)
+            y_mesh = np.linspace(x_min, x_max, 50)
+            X, Y = np.meshgrid(x_mesh, y_mesh)
+            
+            try:
+                Z = f_3d(X, Y)
+                if np.isscalar(Z):
+                    Z = np.full_like(X, float(Z))
+                
+                from mpl_toolkits.mplot3d import Axes3D
+                fig = plt.figure(figsize=(12, 8))
+                ax = fig.add_subplot(111, projection='3d')
+                surf = ax.plot_surface(X, Y, Z, cmap='viridis', edgecolor='none', alpha=0.8)
+                fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5)
+                ax.set_title(f"3D Surface: $z = {sp.latex(func_expr)}$")
+                ax.set_xlabel(v1.name)
+                ax.set_ylabel(v2.name)
+                ax.set_zlabel("z")
+                plt.style.use('dark_background')
+            except Exception as e3d:
+                raise ValueError(f"3D Plotting failed: {str(e3d)}")
+        else:
+            # 2D Plot
+            f_lambdified = sp.lambdify(x_sym, func_expr, "numpy")
+            
+            x_vals = np.linspace(x_min, x_max, 500)
+            y_vals = _coerce_plot_values(f_lambdified(x_vals), x_vals)
+            
+            plt.figure(figsize=(10, 6))
+            plt.plot(x_vals, y_vals, color=params.get("color", '#3b82f6'), 
+                     linestyle=params.get("linestyle", '-'), linewidth=2)
+            plt.axhline(0, color='white', linewidth=0.5, alpha=0.3)
+            plt.axvline(0, color='white', linewidth=0.5, alpha=0.3)
+            plt.grid(True, linestyle='--', alpha=0.2)
+            plt.title(params.get("title") or f"Plot of ${sp.latex(func_expr)}$")
+            plt.xlabel(params.get("xlabel") or var_name)
+            plt.ylabel(params.get("ylabel") or ylabel)
+            plt.style.use('dark_background')
         
         buf_png = io.BytesIO()
         plt.savefig(buf_png, format='png', transparent=True, dpi=150)

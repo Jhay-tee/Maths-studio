@@ -1,11 +1,25 @@
 import asyncio
 import numpy as np
 
+from solvers.utils import normalize_params, validate_physical_params
+
 async def solve_physics(data):
     yield {"type": "step", "content": "Initializing Universal Physics Kernel..."}
     
-    params = data.get("parameters", {})
+    params = normalize_params(data.get("parameters", {}))
+    
+    # Physical validation
+    is_valid, err = validate_physical_params(params)
+    if not is_valid:
+        yield {"type": "error", "message": err}
+        return
+        
     raw = data.get("raw_query", "").lower()
+    
+    # Display variables used
+    used_vars = [k for k in params.keys() if params[k] is not None]
+    if used_vars:
+        yield {"type": "step", "content": f"Physics variables detected: {', '.join(used_vars)}"}
     
     try:
         if "motion" in raw or "kinematics" in raw or "vel" in raw or "accel" in raw:

@@ -1,11 +1,20 @@
 import asyncio
 import numpy as np
 
+from solvers.utils import normalize_params, validate_physical_params
+
 async def solve_controls(data):
     yield {"type": "step", "content": "Initializing Control Systems Kernel..."}
     
-    params = data.get("parameters", {})
+    params = normalize_params(data.get("parameters", {}))
+    # Note: validation might be different for controls (roots can be anything)
+    
     raw = data.get("raw_query", "").lower()
+    
+    # Display variables used
+    used_params = [k for k in params.keys() if params[k] is not None]
+    if used_params:
+        yield {"type": "step", "content": f"System parameters identified: {', '.join(used_params)}"}
     
     try:
         if "transfer" in raw or "tf" in raw:

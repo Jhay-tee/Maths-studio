@@ -1,5 +1,6 @@
 import numpy as np
 from solvers.constants import WATER_DENSITY, WATER_VISCOSITY, G
+from solvers.utils import normalize_params, validate_physical_params
 
 
 def series_points(x_values, y_values):
@@ -9,9 +10,21 @@ def series_points(x_values, y_values):
 async def solve_fluids(data):
     yield {"type": "step", "content": "Initializing Fluid Dynamics Kernel..."}
 
-    params = data.get("parameters", {})
+    params = normalize_params(data.get("parameters", {}))
+    
+    # Physical validation
+    is_valid, err = validate_physical_params(params)
+    if not is_valid:
+        yield {"type": "error", "message": err}
+        return
+        
     raw = data.get("raw_query", "").lower()
     pt = data.get("problem_type", "").lower()
+    
+    # Display variables used
+    used_vars = [k for k in params.keys() if params[k] is not None]
+    if used_vars:
+        yield {"type": "step", "content": f"Boundary conditions detected: {', '.join(used_vars)}"}
 
     try:
         if any(keyword in pt or keyword in raw for keyword in ["venturi", "orifice", "flow_meter"]):

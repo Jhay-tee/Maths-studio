@@ -130,9 +130,10 @@ WORD PROBLEM EXTRACTION:
 - Extract ALL numbers and map them to standard physics/engineering keys in "parameters".
 - CONTEXT MATTERS: If a problem is about "water bubbles" or "oil in a pipe", set domain="fluids". If it's about "beams" or "columns", set domain="structural".
 - DO NOT fallback to "algebra" just because there is an unknown. Algebra implies PURE equation solving with no physical context.
+- CHECK FOR IMPOSSIBILITIES: If the input describes something impossible (e.g. mass = -5kg), extract the parameters anyway, but the solvers will handle the error.
 - SPLIT multi-part questions into separate items in `sub_problems` (e.g. "Find the force AND the work done").
 - NORMALIZE ALL UNITS TO SI (meters, kilograms, seconds, Newtons, Pascals).
-  - e.g. "12kN" -> 12000, "5cm" -> 0.05, "10 min" -> 600.
+  - e.g. "12kN" -> 12000, "5cm" -> 0.05, "10 min" -> 600, "200 GPa" -> 2e11.
 - Examples: 
   - "velocity 5m/s" -> {"v": 5}
   - "length 10m" -> {"L": 10}

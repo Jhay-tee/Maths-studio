@@ -1,6 +1,6 @@
 import asyncio
 import sympy as sp
-from solvers.utils import safe_sympify, clean_math_string
+from solvers.utils import safe_sympify, clean_math_string, simplify_math, detect_variables
 
 async def solve_calculus(data):
     yield {"type": "step", "content": "Initializing Advanced Calculus Kernel..."}
@@ -15,16 +15,15 @@ async def solve_calculus(data):
         return
 
     try:
-        # Detect all alphabetical variables, preserving case
-        import re
-        all_potential = set(re.findall(r'[a-zA-Z]', expr_str))
-        # For calculus, we often use x, t, or user defined vars
-        vars_to_use = sorted(list(all_potential))
-        if not vars_to_use:
-            vars_to_use = ["x"]
+        # Detect variables
+        vars_detected = detect_variables(expr_str)
+        if not vars_detected:
+            vars_detected = ["x"]
         
-        symbols = {v: sp.Symbol(v) for v in vars_to_use}
-        vars_list = [symbols[v] for v in vars_to_use]
+        yield {"type": "step", "content": f"Variables identified: {', '.join(vars_detected)}"}
+        
+        symbols = {v: sp.Symbol(v) for v in vars_detected}
+        vars_list = [symbols[v] for v in vars_detected]
         primary_var = vars_list[0]
 
         steps = [f"### Advanced Calculus Analysis"]

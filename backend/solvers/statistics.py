@@ -16,12 +16,11 @@ async def solve_statistics(data):
         matches = re.findall(r"[-+]?\d*\.\d+|\d+", raw)
         data_points = [float(x) for x in matches]
         
-    if not data_points:
-        yield {"type": "final", "answer": "Please provide a list of data points for statistical analysis."}
+    arr = np.array(data_points)
+    if arr.size == 0:
+        yield {"type": "final", "answer": "The provided data list is empty or could not be parsed. Please provide numbers."}
         return
 
-    arr = np.array(data_points)
-    
     yield {"type": "step", "content": f"Processing {len(arr)} data points..."}
     
     mean = np.mean(arr)

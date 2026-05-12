@@ -74,14 +74,82 @@ def safe_sympify(expr_str, symbols=None):
     clean = clean_math_string(expr_str)
     locals_dict = dict(symbols or {})
 
+    # Detect variable names and add to locals if not present
     for name in set(re.findall(r"[A-Za-z_]\w*", clean)):
         if name not in locals_dict:
             locals_dict[name] = sp.Symbol(name)
 
     try:
-        return parse_expr(clean, local_dict=locals_dict, transformations=MATH_TRANSFORMATIONS, evaluate=True)
-    except Exception as e:
-        return sp.sympify(clean, locals=locals_dict)
+        # First attempt with simplifying enabled for cleaner internal representation
+        parsed = parse_expr(clean, local_dict=locals_dict, transformations=MATH_TRANSFORMATIONS, evaluate=True)
+        return parsed
+    except Exception:
+        # Fallback to standard sympify
+        try:
+            return sp.sympify(clean, locals=locals_dict)
+        except Exception:
+            # Last ditch effort: if it's a list or similar, just return as is or error
+            return sp.sympify(clean)
+
+def simplify_math(expr):
+    """
+    Symbolically simplifies an expression using SymPy.
+    """
+    if expr is None: return None
+    try:
+        if isinstance(expr, str):
+            expr = safe_sympify(expr)
+        return sp.simplify(expr)
+    except Exception:
+        return expr
+
+def detect_variables(expr):
+    """
+    Returns a list of free symbols in an expression.
+    """
+    if expr is None: return []
+    try:
+        if isinstance(expr, str):
+            expr = safe_sympify(expr)
+        return sorted([s.name for s in expr.free_symbols])
+    except Exception:
+        return []
+
+def validate_physical_params(params, constraints=None):
+    """
+    Checks parameters against physical constraints (e.g. mass > 0).
+    Returns (is_valid, error_msg)
+    """
+    if not params: return True, None
+    
+    # Standard physical constraints
+    standard_constraints = {
+        "m": {"min": 0, "label": "Mass"},
+        "mass": {"min": 0, "label": "Mass"},
+        "L": {"min": 0, "label": "Length"},
+        "l": {"min": 0, "label": "Length"},
+        "k": {"min": 0, "label": "Stiffness"},
+        "T": {"min": 0, "label": "Absolute Temperature", "unit": "K"}, # Assume K if not specified? 
+        "rho": {"min": 0, "label": "Density"},
+    }
+    
+    # Merge with custom constraints
+    if constraints:
+        standard_constraints.update(constraints)
+        
+    for key, val in params.items():
+        if key in standard_constraints:
+            limit = standard_constraints[key]
+            try:
+                numeric_val = float(val)
+                if "min" in limit and numeric_val < limit["min"]:
+                    return False, f"{limit['label']} ({key}) cannot be less than {limit['min']}{limit.get('unit', '')}."
+                if "max" in limit and numeric_val > limit["max"]:
+                    return False, f"{limit['label']} ({key}) exceeds physical limit of {limit['max']}{limit.get('unit', '')}."
+            except (ValueError, TypeError):
+                continue
+                
+    return True, None
 
 def normalize_params(params):
     """
