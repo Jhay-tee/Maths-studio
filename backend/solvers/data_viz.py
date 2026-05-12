@@ -51,7 +51,21 @@ async def solve_function_plot(sub):
     yield {"type": "step", "content": "Initializing Advanced Data Visualization Kernel..."}
     params = sub.get("parameters", {})
     expr_str = params.get("expression", "")
-    
+
+    # Normalize assignment-like inputs from word problems/logging:
+    # Examples:
+    #   "f = sin(x)"   -> "sin(x)"
+    #   "y=cos(x)"     -> "cos(x)"
+    #   "y = f(x)+1"   -> "f(x)+1"
+    # Only strip when the LHS looks like a simple variable/name (not a multi-variable equation).
+    expr_str = (expr_str or "").strip()
+    assignment_match = re.match(r"^\s*([A-Za-z_]\w*)\s*=\s*(.+)$", expr_str)
+    if assignment_match:
+        lhs, rhs = assignment_match.group(1), assignment_match.group(2).strip()
+        # If rhs still contains other assignment-like "=", keep original (likely a real equation).
+        if "=" not in rhs:
+            expr_str = rhs
+
     # Handle common trigonometric names
     trig_replacements = {
         r"\bsine\b": "sin",

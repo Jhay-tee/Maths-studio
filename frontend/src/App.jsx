@@ -109,13 +109,22 @@ export default function App() {
       const endpoint = API_BASE ? `${API_BASE}/api/compute/solve` : '/api/compute/solve';
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream'
+        },
         body: JSON.stringify(payload),
         signal: abortControllerRef.current.signal
       });
 
       if (!response.ok) {
         setMessages(prev => prev.map(m => m.id === assistantMessage.id ? { ...m, error: { message: 'Failed to connect to engine.' }, isProcessing: false } : m));
+        setIsProcessing(false);
+        return;
+      }
+
+      if (!response.body) {
+        setMessages(prev => prev.map(m => m.id === assistantMessage.id ? { ...m, error: { message: 'Engine returned no stream (SSE body missing).' }, isProcessing: false } : m));
         setIsProcessing(false);
         return;
       }
@@ -154,7 +163,9 @@ export default function App() {
                 setMissingParams(data.missing_params || []);
                 setParameterPrompt(data.problem_description || saveContext.currentInput);
                 setShowParamDialog(true);
-                abortControllerRef.current?.abort();
+
+                // Do NOT abort the stream here; aborting often triggers "Connection interrupted"
+                // before the backend has finished sending the needs_parameters response.
                 return {
                   ...msg,
                   isProcessing: false,
