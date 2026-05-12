@@ -6,7 +6,7 @@
 }
 
 :root {
-  font-family: Inter, system-ui, sans-serif;
+  font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   background-color: #0b0b0b;
   color: white;
   -webkit-font-smoothing: antialiased;
@@ -34,6 +34,25 @@ body {
   max-width: 100%;
 }
 
+.markdown-content > *:first-child,
+.math-render > *:first-child {
+  margin-top: 0;
+}
+
+.markdown-content > *:last-child,
+.math-render > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.math-render h1,
+.math-render h2,
+.math-render h3 {
+  letter-spacing: -0.02em;
+}
+
 .math-render table, .markdown-content table {
   display: block;
   overflow-x: auto;
@@ -50,6 +69,13 @@ body {
   border-radius: 1rem;
   background: rgba(255, 255, 255, 0.04);
   padding: 1rem;
+}
+
+.markdown-content ul li::marker,
+.markdown-content ol li::marker,
+.math-render ul li::marker,
+.math-render ol li::marker {
+  color: rgba(255, 255, 255, 0.45);
 }
 
 /* Katex sizing fix for mobile */

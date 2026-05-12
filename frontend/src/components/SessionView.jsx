@@ -15,7 +15,7 @@ const SessionView = ({
   compact = false
 }) => {
   return (
-    <div className={`w-full space-y-6 ${compact ? '' : 'max-w-4xl mx-auto pb-32'}`}>
+    <div className={`w-full space-y-8 ${compact ? '' : 'max-w-6xl mx-auto pb-32'}`}>
       {!compact && (
         <header className="space-y-4 border-l-2 border-white/20 pl-6">
           <div className="space-y-1">
@@ -33,12 +33,12 @@ const SessionView = ({
         <UnitLens units={currentUnits} />
       )}
 
-      <div className={`grid grid-cols-1 ${compact ? '' : 'lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]'} gap-8 items-start`}>
-        <div className="space-y-4">
+      <div className={`grid grid-cols-1 ${compact ? '' : 'xl:grid-cols-[minmax(0,1.18fr)_minmax(320px,0.82fr)]'} gap-10 items-start`}>
+        <div className="space-y-6">
           <SolutionStream steps={currentSteps} final={currentFinal} error={currentError} isStreaming={isProcessing} />
           {currentTables.length > 0 && (
-            <div className="space-y-4">
-              <h3 className="text-[10px] font-black uppercase tracking-widest text-white/30">Tables</h3>
+            <div className="space-y-5">
+              <h3 className="text-[10px] font-black uppercase tracking-[0.28em] text-white/30">Tables</h3>
               {currentTables.map((table, index) => (
                 <DataTable
                   key={`${table.title || 'table'}-${index}`}
@@ -52,8 +52,8 @@ const SessionView = ({
         </div>
 
         {currentDiagrams.length > 0 && (
-          <div className="space-y-4">
-            <h3 className="text-[10px] font-black uppercase tracking-widest text-white/30">Technical Visuals</h3>
+          <div className="space-y-5 xl:sticky xl:top-24">
+            <h3 className="text-[10px] font-black uppercase tracking-[0.28em] text-white/30">Technical Visuals</h3>
             <div className="space-y-6">
               {currentDiagrams.map((diag, i) => (
                 <StudioCanvas key={i} type={diag.diagram_type} data={diag.data} />

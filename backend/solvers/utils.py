@@ -1,5 +1,16 @@
 import re
 import sympy as sp
+from sympy.parsing.sympy_parser import (
+    parse_expr,
+    standard_transformations,
+    implicit_multiplication_application,
+    convert_xor,
+)
+
+MATH_TRANSFORMATIONS = standard_transformations + (
+    implicit_multiplication_application,
+    convert_xor,
+)
 
 def clean_math_string(s):
     """
@@ -44,12 +55,16 @@ def safe_sympify(expr_str, symbols=None):
     Wraps sp.sympify with robust cleaning.
     """
     clean = clean_math_string(expr_str)
+    locals_dict = dict(symbols or {})
+
+    for name in set(re.findall(r"[A-Za-z_]\w*", clean)):
+        if name not in locals_dict:
+            locals_dict[name] = sp.Symbol(name)
+
     try:
-        return sp.sympify(clean, locals=symbols)
+        return parse_expr(clean, local_dict=locals_dict, transformations=MATH_TRANSFORMATIONS, evaluate=True)
     except Exception as e:
-        # Fallback: if it's "x = 5", just return 5 or something? 
-        # No, let the solver handle it.
-        raise e
+        return sp.sympify(clean, locals=locals_dict)
 
 def normalize_params(params):
     """
@@ -259,6 +274,69 @@ def parse_numeric_list(value):
     text = str(value).strip()
     if not text:
         return []
+
+
+def resolve_numeric_expressions(params):
+    resolved = dict(params or {})
+
+    def looks_numeric_expression(value):
+        if not isinstance(value, str):
+            return False
+        text = value.strip()
+        if not text or len(text) > 80:
+            return False
+        if re.search(r"[=,]", text):
+            return False
+        if re.search(r"[+\-*/^()]", text) or re.search(r"\d", text):
+            return True
+        return False
+
+    numeric_locals = {}
+    for key, value in resolved.items():
+        try:
+            numeric_locals[key] = float(value)
+        except (TypeError, ValueError):
+            continue
+
+    def transform(value):
+        if isinstance(value, dict):
+            return {inner_key: transform(inner_value) for inner_key, inner_value in value.items()}
+        if isinstance(value, list):
+            return [transform(item) for item in value]
+        if not looks_numeric_expression(value):
+            return value
+        try:
+            expr = safe_sympify(value, symbols=numeric_locals)
+            if getattr(expr, "free_symbols", None) and expr.free_symbols:
+                return value
+            return float(expr)
+        except Exception:
+            return value
+
+    for key, value in list(resolved.items()):
+        new_value = transform(value)
+        resolved[key] = new_value
+        try:
+            numeric_locals[key] = float(new_value)
+        except (TypeError, ValueError):
+            continue
+
+    return resolved
+
+
+def polish_final_answer(answer, domain="", problem_type=""):
+    text = (answer or "").strip()
+    if not text:
+        return text
+
+    if "###" not in text:
+        heading = "### Solution"
+        if domain:
+            heading = f"### {domain.replace('_', ' ').title()} Solution"
+        text = f"{heading}\n{text}"
+
+    text = text.replace("\n- **", "\n- **").replace("\n\n\n", "\n\n")
+    return text.strip()
 
     text = text.strip("[]()")
     parts = [segment.strip() for segment in re.split(r"[,\s]+", text) if segment.strip()]

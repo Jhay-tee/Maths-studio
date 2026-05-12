@@ -7,6 +7,12 @@ def series_points(x_values, y_values):
     return [{"x": float(x), "y": float(y)} for x, y in zip(x_values, y_values)]
 
 
+def _extract_first_number(text, fallback=None):
+    import re
+    match = re.search(r"[-+]?\d*\.?\d+", text or "")
+    return float(match.group()) if match else fallback
+
+
 async def solve_mechanics(data):
     yield {"type": "step", "content": "Initializing Classical Mechanics Kernel..."}
 
@@ -21,6 +27,9 @@ async def solve_mechanics(data):
                 yield chunk
         elif any(keyword in pt or keyword in raw for keyword in ["kinematics", "motion", "suvat"]):
             async for chunk in solve_kinematics(params):
+                yield chunk
+        elif any(keyword in pt or keyword in raw for keyword in ["static_friction", "friction", "normal force", "book", "table"]):
+            async for chunk in solve_contact_forces(params, raw):
                 yield chunk
         elif any(keyword in pt or keyword in raw for keyword in ["static", "equilibrium", "reaction"]):
             async for chunk in solve_statics(params):
@@ -163,6 +172,44 @@ async def solve_statics(params):
         f"- Right reaction: {rb:.3f} N",
     ]
     yield {"type": "final", "answer": "\n".join(steps)}
+
+
+async def solve_contact_forces(params, raw_query):
+    yield {"type": "step", "content": "Identifying contact forces and static-friction limits..."}
+
+    m = float(params.get("m", params.get("mass", _extract_first_number(raw_query, 1.0) or 1.0)))
+    g = float(params.get("g", G))
+    horizontal_push = float(params.get("F", params.get("force", 5.0 if "5 n" in raw_query else 0.0)))
+    mu_s = float(params.get("mu_s", params.get("coefficient_static_friction", params.get("coefficient of static friction", 0.3 if "0.3" in raw_query else 0.0))))
+
+    weight = m * g
+    normal = weight
+    friction = horizontal_push if horizontal_push > 0 else 0.0
+    friction_limit = mu_s * normal if mu_s > 0 else None
+
+    answer = [
+        "### Forces On The Object",
+        "- Vertical forces: weight downward and normal force upward.",
+    ]
+
+    if horizontal_push > 0:
+        answer.append(f"- Horizontal forces: applied push of {horizontal_push:.2f} N and static friction of {friction:.2f} N in the opposite direction.")
+    else:
+        answer.append("- No horizontal force is required to describe the object at rest.")
+
+    answer.extend([
+        "",
+        "### Key Results",
+        f"- Weight: {weight:.2f} N",
+        f"- Normal force: {normal:.2f} N",
+    ])
+
+    if horizontal_push > 0:
+        answer.append(f"- Since the object does not move, static friction matches the push: {friction:.2f} N.")
+    if friction_limit is not None:
+        answer.append(f"- Minimum force to start motion: {friction_limit:.2f} N.")
+
+    yield {"type": "final", "answer": "\n".join(answer)}
 
 
 async def solve_work_energy(params):

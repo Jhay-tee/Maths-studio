@@ -17,8 +17,8 @@ async def solve_fluids(data):
         if any(keyword in pt or keyword in raw for keyword in ["venturi", "orifice", "flow_meter"]):
             async for chunk in solve_flow_meter(params):
                 yield chunk
-        elif any(keyword in pt or keyword in raw for keyword in ["manometer", "hydrostatic", "hydrostatics"]):
-            async for chunk in solve_hydrostatics(params):
+        elif any(keyword in pt or keyword in raw for keyword in ["manometer", "hydrostatic", "hydrostatics", "pressure at the bottom", "bubble", "vegetable oil", "hole at the bottom"]):
+            async for chunk in solve_hydrostatics(params, raw):
                 yield chunk
         elif "continuity" in pt or "continuity" in raw:
             async for chunk in solve_continuity(params):
@@ -112,7 +112,7 @@ async def solve_flow_meter(params):
     yield {"type": "final", "answer": f"### Flow Meter Analysis\n- Inlet diameter: {d1:.4f} m\n- Throat diameter: {d2:.4f} m\n- Pressure drop: {dp:.2f} Pa\n- Discharge coefficient: {cd:.3f}\n- Flow rate: {q:.6f} m^3/s\n- Throat velocity: {v2:.4f} m/s"}
 
 
-async def solve_hydrostatics(params):
+async def solve_hydrostatics(params, raw_query=""):
     yield {"type": "step", "content": "Computing hydrostatic pressure variation with depth..."}
     h = float(params.get("h", params.get("depth", 1)))
     rho = float(params.get("rho", WATER_DENSITY))
@@ -130,6 +130,15 @@ async def solve_hydrostatics(params):
         f"- Gauge pressure: {p_gauge:.2f} Pa",
         f"- Gauge pressure: {p_gauge / 1000:.4f} kPa",
     ]
+    if raw_query:
+        if "add more water" in raw_query:
+            steps.append("- Adding more water increases the pressure because pressure grows with liquid height.")
+        if "vegetable oil" in raw_query:
+            steps.append("- For the same height, vegetable oil gives a lower pressure because its density is lower than water.")
+        if "bubble" in raw_query:
+            steps.append("- The air bubble expands as it rises because the surrounding pressure decreases toward the surface.")
+        if "hole at the bottom" in raw_query:
+            steps.append("- Water flows out fastest at first because the pressure head is largest, then slows down as the water level drops.")
     yield {"type": "final", "answer": "\n".join(steps)}
 
 

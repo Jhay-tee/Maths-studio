@@ -161,8 +161,8 @@ async def solve_calculus(data):
             
             steps.extend([
                 f"**Expression:** $${sp.latex(expr)}$$",
-                f"**Derivative ($\partial/\partial {sp.latex(primary_var)}$):** $${sp.latex(diff_res)}$$",
-                f"**Antiderivative ($\int \cdot d{sp.latex(primary_var)}$):** $${sp.latex(int_res)} + C$$"
+                f"**Derivative ($\\partial/\\partial {sp.latex(primary_var)}$):** $${sp.latex(diff_res)}$$",
+                f"**Antiderivative ($\\int \\cdot d{sp.latex(primary_var)}$):** $${sp.latex(int_res)} + C$$"
             ])
 
         yield {"type": "final", "answer": "\n\n".join(steps)}
