@@ -28,7 +28,48 @@ const StudioCanvas = ({ type, data, width = 600, height = 300 }) => {
       renderNetworkDiagram(ctx, w, h, diagramData);
     } else if (type === 'beam_analysis') {
       renderBeamDiagrams(ctx, w, h, diagramData);
+    } else if (type === 'matrix') {
+      renderMatrixDiagram(ctx, w, h, diagramData);
     }
+  };
+
+  const renderMatrixDiagram = (ctx, w, h, data) => {
+    const values = data.values || [];
+    const rows = data.rows || values.length || 0;
+    const cols = data.cols || values[0]?.length || 0;
+    if (!rows || !cols) return;
+
+    const cellWidth = Math.min(90, (w - 120) / cols);
+    const cellHeight = Math.min(60, (h - 120) / rows);
+    const gridWidth = cols * cellWidth;
+    const gridHeight = rows * cellHeight;
+    const startX = (w - gridWidth) / 2;
+    const startY = (h - gridHeight) / 2;
+
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(startX - 14, startY - 14, gridWidth + 28, gridHeight + 28);
+
+    ctx.font = 'bold 14px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    values.forEach((row, rowIndex) => {
+      row.forEach((value, colIndex) => {
+        const x = startX + colIndex * cellWidth;
+        const y = startY + rowIndex * cellHeight;
+        ctx.fillStyle = 'rgba(255,255,255,0.04)';
+        ctx.fillRect(x, y, cellWidth - 6, cellHeight - 6);
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.strokeRect(x, y, cellWidth - 6, cellHeight - 6);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillText(String(value), x + (cellWidth - 6) / 2, y + (cellHeight - 6) / 2);
+      });
+    });
+
+    ctx.fillStyle = '#60a5fa';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText(`${rows} x ${cols} Matrix`, w / 2, 26);
   };
 
   const renderForceDiagram = (ctx, w, h, data) => {
@@ -493,6 +534,25 @@ const StudioCanvas = ({ type, data, width = 600, height = 300 }) => {
             </div>
             <DataTable data={data.table_json} columns={data.columns} />
           </div>
+        )}
+      </div>
+    );
+  }
+
+  if (type === 'matrix') {
+    return (
+      <div className="space-y-3">
+        <div className="bg-[#0b0b0b] p-4 border border-white/10 rounded-[24px] overflow-hidden shadow-2xl relative group">
+          <canvas
+            ref={canvasRef}
+            width={width}
+            height={height}
+            className="w-full h-auto"
+            id={`canvas-${type}`}
+          />
+        </div>
+        {data?.caption && (
+          <p className="text-xs text-white/50 leading-6">{data.caption}</p>
         )}
       </div>
     );

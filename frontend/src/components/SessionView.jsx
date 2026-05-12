@@ -1,10 +1,19 @@
 import React from 'react';
 import SolutionStream from './SolutionStream';
-import { Info } from 'lucide-react';
 import StudioCanvas from './StudioCanvas';
 import UnitLens from './UnitLens';
+import DataTable from './DataTable';
 
-const SessionView = ({ currentSteps, currentFinal, currentError, currentDiagrams, currentUnits, isProcessing, compact = false }) => {
+const SessionView = ({
+  currentSteps,
+  currentFinal,
+  currentError,
+  currentDiagrams,
+  currentTables = [],
+  currentUnits,
+  isProcessing,
+  compact = false
+}) => {
   return (
     <div className={`w-full space-y-6 ${compact ? '' : 'max-w-4xl mx-auto pb-32'}`}>
       {!compact && (
@@ -24,10 +33,22 @@ const SessionView = ({ currentSteps, currentFinal, currentError, currentDiagrams
         <UnitLens units={currentUnits} />
       )}
 
-      <div className={`grid grid-cols-1 ${compact ? '' : 'lg:grid-cols-2'} gap-8 items-start`}>
+      <div className={`grid grid-cols-1 ${compact ? '' : 'lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]'} gap-8 items-start`}>
         <div className="space-y-4">
-          <h3 className="text-[10px] font-black uppercase tracking-widest text-white/30">Analysis Log</h3>
-          <SolutionStream steps={currentSteps} final={currentFinal} error={currentError} />
+          <SolutionStream steps={currentSteps} final={currentFinal} error={currentError} isStreaming={isProcessing} />
+          {currentTables.length > 0 && (
+            <div className="space-y-4">
+              <h3 className="text-[10px] font-black uppercase tracking-widest text-white/30">Tables</h3>
+              {currentTables.map((table, index) => (
+                <DataTable
+                  key={`${table.title || 'table'}-${index}`}
+                  data={table.rows || []}
+                  columns={table.columns || []}
+                  title={table.title}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         {currentDiagrams.length > 0 && (

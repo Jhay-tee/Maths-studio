@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, ArrowUpDown, Search } from 'lucide-react';
 
-export default function DataTable({ data, columns }) {
+export default function DataTable({ data = [], columns = [], title }) {
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
   const [currentPage, setCurrentPage] = useState(1);
   const [filterText, setFilterText] = useState('');
@@ -48,6 +48,11 @@ export default function DataTable({ data, columns }) {
 
   return (
     <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden my-4 text-xs">
+      {title && (
+        <div className="px-4 pt-4">
+          <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/50">{title}</h4>
+        </div>
+      )}
       <div className="p-3 border-b border-white/10 flex items-center justify-between gap-4">
         <div className="relative flex-1">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-white/40" />
@@ -64,8 +69,8 @@ export default function DataTable({ data, columns }) {
         </div>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse">
+      <div className="overflow-x-auto pb-1">
+        <table className="w-full min-w-max border-collapse">
           <thead>
             <tr className="bg-white/5">
               {columns.map(col => (
@@ -84,9 +89,9 @@ export default function DataTable({ data, columns }) {
           </thead>
           <tbody>
             {paginatedData.map((row, i) => (
-              <tr key={i} className="hover:bg-white-[0.02] transition-colors border-b border-white-[0.05] last:border-0 text-white/80">
+              <tr key={i} className="hover:bg-white/5 transition-colors border-b border-white/[0.05] last:border-0 text-white/80">
                 {columns.map(col => (
-                  <td key={col} className="px-4 py-2 font-mono">
+                  <td key={col} className="px-4 py-2 font-mono whitespace-nowrap">
                     {typeof row[col] === 'number' ? row[col].toFixed(4) : row[col]}
                   </td>
                 ))}

@@ -40,6 +40,18 @@ body {
   white-space: nowrap;
 }
 
+.math-render p:last-child,
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content .katex-display,
+.math-render .katex-display {
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 1rem;
+}
+
 /* Katex sizing fix for mobile */
 .katex-display {
   margin: 1em 0;

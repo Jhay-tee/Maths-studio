@@ -9,6 +9,7 @@ async def solve_algebra(data):
     params = data.get("parameters", {})
     expr_str = params.get("expression", data.get("raw_query", ""))
     expr_str = clean_math_string(expr_str)
+    preferred_method = data.get("requested_method") or params.get("method") or "standard symbolic solving"
     
     if not expr_str:
         yield {"type": "final", "answer": "Error: No algebraic expression found to solve."}
@@ -36,7 +37,7 @@ async def solve_algebra(data):
         
         # Detect Matrix Operations
         if "[" in expr_str and "]" in expr_str:
-            yield {"type": "step", "content": "Detected Matrix structure. Performing Linear Algebra analysis..."}
+            yield {"type": "step", "content": f"Detected matrix structure. Using {preferred_method} for linear algebra analysis..."}
             # Simple matrix parsing from string like [[1,2],[3,4]]
             import ast
             try:
@@ -52,9 +53,19 @@ async def solve_algebra(data):
                 M = sp.Matrix(matrix_data)
                 rows, cols = M.shape
                 
-                steps = ["### Linear Algebra Analysis"]
+                steps = ["### Linear Algebra Analysis", f"**Method Used:** {preferred_method.title()}"]
                 steps.append(f"Matrix $M = {sp.latex(M)}$")
                 steps.append(f"Dimensions: {rows}x{cols}")
+                yield {
+                    "type": "diagram",
+                    "diagram_type": "matrix",
+                    "data": {
+                        "rows": rows,
+                        "cols": cols,
+                        "values": matrix_data,
+                        "caption": "Matrix interpreted from the user input.",
+                    },
+                }
                 
                 if rows == cols:
                     yield {"type": "step", "content": "Computing Determinant and Inverse..."}
@@ -96,7 +107,7 @@ async def solve_algebra(data):
             yield {"type": "step", "content": "Solving system of equations..."}
             sol_dict = sp.solve(eqs, list(symbols.values()))
             
-            steps = ["### Simultaneous Equations Resolution"]
+            steps = ["### Simultaneous Equations Resolution", f"**Method Used:** {preferred_method.title()}"]
             steps.append("#### Given System:")
             for eq in eqs:
                 steps.append(f"- $${sp.latex(eq)}$$")
@@ -145,7 +156,7 @@ async def solve_algebra(data):
                 discriminant = b**2 - 4*a*c
                 yield {"type": "step", "content": "Detected Quadratic Equation. Applying Quadratic Formula..."}
             
-            steps = ["### Algebraic Resolution"]
+            steps = ["### Algebraic Resolution", f"**Method Used:** {preferred_method.title()}"]
             steps.append(f"Equation: $${sp.latex(equation)}$$")
             
             if is_quadratic:

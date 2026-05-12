@@ -6,17 +6,29 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 
+const markdownComponents = {
+  h1: ({ children }) => <h1 className="text-xl font-black tracking-tight mt-2 mb-4">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-lg font-bold tracking-tight mt-6 mb-3">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-sm font-bold uppercase tracking-[0.2em] text-white/70 mt-5 mb-2">{children}</h3>,
+  p: ({ children }) => <p className="leading-8 text-white/90 mb-4">{children}</p>,
+  ul: ({ children }) => <ul className="space-y-2 mb-4">{children}</ul>,
+  ol: ({ children }) => <ol className="space-y-2 mb-4 list-decimal pl-5">{children}</ol>,
+  li: ({ children }) => <li className="leading-7">{children}</li>,
+  strong: ({ children }) => <strong className="text-white">{children}</strong>,
+  code: ({ children }) => <code className="bg-white/10 px-1.5 py-0.5 rounded text-[0.95em]">{children}</code>,
+};
+
 export default function SolutionStream({ steps, final, error, isStreaming }) {
   const hasContent = steps.length > 0 || final || error;
   if (!hasContent) return null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* ── Step log ── */}
       {steps.length > 0 && (
-        <div className="space-y-3">
+        <div className="space-y-4">
           <p className="text-[9px] font-black uppercase tracking-[0.3em] text-white/30">
-            Analysis Log
+            Step By Step
           </p>
           <AnimatePresence mode="popLayout">
             {steps.map((step, i) => {
@@ -27,11 +39,11 @@ export default function SolutionStream({ steps, final, error, isStreaming }) {
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.2 }}
-                  className="flex items-start gap-3 group"
+                  className="flex items-start gap-4 group rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3"
                 >
                   <div className="mt-0.5 shrink-0">
                     <CheckCircle2
-                      className={`w-3.5 h-3.5 transition-colors ${
+                    className={`w-4 h-4 transition-colors ${
                         isLast && isStreaming
                           ? 'text-white/60'
                           : 'text-white/30'
@@ -39,12 +51,13 @@ export default function SolutionStream({ steps, final, error, isStreaming }) {
                     />
                   </div>
                   <div
-                    className={`text-xs font-mono tracking-tight transition-colors ${
-                      isLast && isStreaming ? 'text-white/80' : 'text-white/40'
+                    className={`text-sm tracking-tight transition-colors ${
+                      isLast && isStreaming ? 'text-white/90' : 'text-white/70'
                     } markdown-content`}
                   >
                     <ReactMarkdown 
-                      remarkPlugins={[remarkMath]} 
+                      remarkPlugins={[remarkMath]}
+                      components={markdownComponents}
                       rehypePlugins={[rehypeKatex]}
                     >
                       {step}
@@ -100,13 +113,13 @@ export default function SolutionStream({ steps, final, error, isStreaming }) {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
             transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-            className="bg-white/5 border border-white/10 p-6 rounded-xl shadow-2xl space-y-4 overflow-hidden"
+            className="bg-white/5 border border-white/10 p-6 md:p-8 rounded-2xl shadow-2xl space-y-6 overflow-hidden"
           >
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <FlaskConical className="w-3.5 h-3.5 text-white/40" />
                 <h4 className="text-[9px] font-black uppercase tracking-[0.3em] text-white/40">
-                  Final Solution
+                  Final Answer
                 </h4>
               </div>
               <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-[8px] font-bold rounded uppercase tracking-wider">
@@ -114,9 +127,10 @@ export default function SolutionStream({ steps, final, error, isStreaming }) {
               </span>
             </div>
 
-            <div className="text-sm md:text-base font-mono leading-relaxed text-white prose prose-invert max-w-none math-render overflow-x-auto">
+            <div className="text-sm md:text-base leading-relaxed text-white max-w-none math-render overflow-x-auto">
               <ReactMarkdown 
-                remarkPlugins={[remarkMath]} 
+                remarkPlugins={[remarkMath]}
+                components={markdownComponents}
                 rehypePlugins={[rehypeKatex]}
               >
                 {final}

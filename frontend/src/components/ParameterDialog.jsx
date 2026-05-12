@@ -48,10 +48,10 @@ export default function ParameterDialog({
             <AlertCircle className="w-5 h-5 text-yellow-400 shrink-0 mt-0.5" />
             <div>
               <h2 className="text-lg font-black uppercase tracking-tight text-white">
-                Missing Parameters
+                Parameter Required
               </h2>
               <p className="text-xs text-white/50 mt-1">
-                The system needs additional values to solve this problem
+                Parameter is not specified. Add what is missing and continue, or cancel to stop immediately.
               </p>
             </div>
           </div>
@@ -79,13 +79,23 @@ export default function ParameterDialog({
                   {param.label}
                   {param.unit && <span className="text-white/30"> ({param.unit})</span>}
                 </label>
-                <input
-                  type="number"
-                  placeholder={param.hint || `Enter ${param.label}`}
-                  value={values[param.key] || ''}
-                  onChange={(e) => handleInputChange(param.key, e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/20 focus:border-white/30 focus:ring-1 focus:ring-white/10 transition-all"
-                />
+                {param.key === 'data' ? (
+                  <textarea
+                    placeholder={param.hint || `Enter ${param.label}`}
+                    value={values[param.key] || ''}
+                    onChange={(e) => handleInputChange(param.key, e.target.value)}
+                    rows={4}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/20 focus:border-white/30 focus:ring-1 focus:ring-white/10 transition-all resize-y"
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    placeholder={param.hint || `Enter ${param.label}`}
+                    value={values[param.key] || ''}
+                    onChange={(e) => handleInputChange(param.key, e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/20 focus:border-white/30 focus:ring-1 focus:ring-white/10 transition-all"
+                  />
+                )}
                 {param.hint && (
                   <p className="text-[9px] text-white/30 italic">{param.hint}</p>
                 )}

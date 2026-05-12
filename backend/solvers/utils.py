@@ -110,3 +110,161 @@ def normalize_params(params):
             normalized[mapping[k_clean]] = v
             
     return normalized
+
+
+STANDARD_DEFAULTS = {
+    "g": 9.81,
+    "rho": 1000.0,
+    "n1": 1.0,
+    "n2": 1.5,
+    "f": 50.0,
+    "E": 200e9,
+    "I": 1e-4,
+}
+
+
+def _to_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def apply_standard_defaults(params):
+    enriched = dict(params or {})
+    for key, value in STANDARD_DEFAULTS.items():
+        if enriched.get(key) in (None, ""):
+            enriched[key] = value
+    return enriched
+
+
+def merge_params(*param_sets):
+    merged = {}
+    for param_set in param_sets:
+        if not param_set:
+            continue
+        for key, value in param_set.items():
+            if value not in (None, ""):
+                merged[key] = value
+    return normalize_params(merged)
+
+
+def find_missing_params(domain, problem_type, params, raw_query=""):
+    lowered_query = (raw_query or "").lower()
+    lowered_type = (problem_type or "").lower()
+    lowered_domain = (domain or "").lower()
+    normalized = apply_standard_defaults(normalize_params(params or {}))
+
+    def require(spec):
+        missing = []
+        for item in spec:
+            key = item["key"]
+            aliases = item.get("aliases", [])
+            found = normalized.get(key)
+            if found in (None, ""):
+                for alias in aliases:
+                    if normalized.get(alias) not in (None, ""):
+                        found = normalized.get(alias)
+                        break
+            if found in (None, ""):
+                missing.append(item)
+        return missing
+
+    if lowered_domain == "mechanics" and ("projectile" in lowered_type or "projectile" in lowered_query):
+        return require([
+            {"key": "v0", "aliases": ["velocity"], "label": "Initial velocity", "unit": "m/s", "hint": "Example: 20"},
+            {"key": "theta", "aliases": ["angle"], "label": "Launch angle", "unit": "deg", "hint": "Example: 45"},
+        ])
+
+    if lowered_domain == "mechanics" and ("kinematics" in lowered_type or "motion" in lowered_query):
+        known = sum(1 for key in ["u", "v", "a", "t", "s"] if normalized.get(key) not in (None, ""))
+        if known < 3:
+            return [
+                {"key": "u", "label": "Initial velocity", "unit": "m/s", "hint": "Any 3 of u, v, a, t, s are enough."},
+                {"key": "v", "label": "Final velocity", "unit": "m/s"},
+                {"key": "a", "label": "Acceleration", "unit": "m/s²"},
+                {"key": "t", "label": "Time", "unit": "s"},
+                {"key": "s", "label": "Displacement", "unit": "m"},
+            ]
+
+    if lowered_domain == "circuits" and ("ohm" in lowered_query or "resistance" in lowered_query or "ohms_law" in lowered_type):
+        known = sum(1 for key in ["v", "i", "r"] if normalized.get(key) not in (None, ""))
+        if known < 2:
+            return [
+                {"key": "v", "label": "Voltage", "unit": "V", "hint": "Provide any 2 of V, I, R."},
+                {"key": "i", "label": "Current", "unit": "A"},
+                {"key": "r", "label": "Resistance", "unit": "Ohm"},
+            ]
+
+    if lowered_domain == "fluids" and ("continuity" in lowered_query or "continuity" in lowered_type):
+        known = sum(1 for key in ["v1", "v2", "a1", "a2"] if normalized.get(key) not in (None, ""))
+        if known < 3:
+            return [
+                {"key": "v1", "label": "Inlet velocity", "unit": "m/s"},
+                {"key": "v2", "label": "Outlet velocity", "unit": "m/s"},
+                {"key": "a1", "label": "Inlet area", "unit": "m²"},
+                {"key": "a2", "label": "Outlet area", "unit": "m²"},
+            ]
+
+    if lowered_domain == "structural" and any(keyword in lowered_type or keyword in lowered_query for keyword in ["beam", "deflection", "shear", "moment"]):
+        return require([
+            {"key": "L", "aliases": ["l"], "label": "Beam length", "unit": "m", "hint": "Total span length."},
+        ])
+
+    if lowered_domain == "statistics":
+        raw_numbers = re.findall(r"[-+]?\d*\.\d+|\d+", lowered_query)
+        values = normalized.get("data", [])
+        if not values and len(raw_numbers) < 2:
+            return [
+                {"key": "data", "label": "Dataset", "unit": "comma-separated", "hint": "Example: 12, 15, 18, 20"},
+            ]
+
+    return []
+
+
+def parse_user_supplied_value(raw_value):
+    if isinstance(raw_value, (int, float, list, dict)):
+        return raw_value
+    if raw_value is None:
+        return None
+
+    text = str(raw_value).strip()
+    if not text:
+        return None
+
+    if "," in text and not any(ch in text for ch in "[]{}"):
+        numbers = [segment.strip() for segment in text.split(",") if segment.strip()]
+        parsed_numbers = [_to_float(item) for item in numbers]
+        if all(item is not None for item in parsed_numbers):
+            return parsed_numbers
+
+    numeric_value = _to_float(text)
+    if numeric_value is not None:
+        return numeric_value
+
+    return text
+
+
+def parse_numeric_list(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        parsed = []
+        for item in value:
+            maybe = _to_float(item)
+            if maybe is not None:
+                parsed.append(maybe)
+        return parsed
+
+    text = str(value).strip()
+    if not text:
+        return []
+
+    text = text.strip("[]()")
+    parts = [segment.strip() for segment in re.split(r"[,\s]+", text) if segment.strip()]
+    values = []
+    for part in parts:
+        maybe = _to_float(part)
+        if maybe is not None:
+            values.append(maybe)
+    return values

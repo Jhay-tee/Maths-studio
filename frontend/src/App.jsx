@@ -1,10 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Plus, 
   History, 
-  X,
-  Trash2,
-  Book
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -20,7 +17,6 @@ import {
 import HistorySidebar from './components/HistorySidebar';
 import MessageBubble from './components/MessageBubble';
 import ChatInput from './components/ChatInput';
-import SessionView from './components/SessionView';
 import DocsPage from './components/DocsPage';
 import ParameterDialog from './components/ParameterDialog';
 
@@ -38,6 +34,7 @@ export default function App() {
   const [showParamDialog, setShowParamDialog] = useState(false);
   const [missingParams, setMissingParams] = useState([]);
   const [pendingCompute, setPendingCompute] = useState(null);
+  const [parameterPrompt, setParameterPrompt] = useState('');
   const abortControllerRef = useRef(null);
   const scrollRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -76,54 +73,20 @@ export default function App() {
     setHistory(data.sort((a,b) => b.timestamp - a.timestamp));
   };
 
-  const handleCompute = async () => {
-    if (!online || isProcessing) return;
-    if (!inputText.trim() && !imagePreview && !dataFile) return;
-
-    const userMessage = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: inputText,
-      image: imagePreview,
-      timestamp: Date.now()
-    };
-
-    const assistantMessage = {
-      id: (Date.now() + 1).toString(),
-      role: 'assistant',
-      isProcessing: true,
-      steps: [],
-      final: null,
-      diagrams: [],
-      units: [],
-      subProblems: {}, // For handling multiple solutions
-      timestamp: Date.now()
-    };
-
-    // Always create fresh messages - don't accumulate previous assistant messages
-    setMessages(prev => [...prev.filter(m => m.role === 'user'), userMessage, assistantMessage]);
-
-    // Capture current values before clearing state
-    const currentInput = inputText;
-    const currentImage = imagePreview;
-    const currentData = dataFile;
-    const currentConfig = plotConfig;
-
-    setInputText('');
-    setImagePreview(null);
-    setDataFile(null);
-    setPlotConfig({ type: 'line', title: '', xlabel: '', ylabel: '' });
-    setIsProcessing(true);
-
+  const executeCompute = async ({ payload, assistantMessage, saveContext }) => {
     abortControllerRef.current = new AbortController();
-
-    const payload = {
-      type: currentImage ? 'image' : (currentData ? 'data' : 'text'),
-      input: currentImage || (currentData ? currentData.base64 : currentInput),
-      filename: currentData?.name,
-      plot_config: currentConfig,
-      history: messages.slice(-4).map(m => ({ role: m.role, content: m.content || '' }))
+    const userMessage = {
+      id: saveContext.userMessageId,
+      role: 'user',
+      content: saveContext.currentInput,
+      image: saveContext.currentImage,
+      timestamp: saveContext.timestamp
     };
+    setIsProcessing(true);
+    setShowParamDialog(false);
+    setMissingParams([]);
+    setParameterPrompt('');
+    setMessages(prev => [...prev.filter(m => m.role === 'user'), userMessage, assistantMessage]);
 
     const API_BASE = import.meta.env.VITE_BACKEND_URL || '';
 
@@ -161,17 +124,30 @@ export default function App() {
             setMessages(prev => prev.map(msg => {
               if (msg.id !== assistantMessage.id) return msg;
 
-              const pid = data.problem_id || 'default';
-              const updatedSub = msg.subProblems[pid] || { steps: [], diagrams: [], units: [] };
-
               if (data.type === 'step') {
                 return { ...msg, steps: [...msg.steps, data.content] };
+              } else if (data.type === 'table') {
+                return { ...msg, tables: [...(msg.tables || []), data] };
               } else if (data.type === 'units') {
                 return { ...msg, units: [...msg.units, ...data.data] };
               } else if (data.type === 'final') {
                 return { ...msg, final: (msg.final ? msg.final + '\n\n' : '') + data.answer };
               } else if (data.type === 'diagram') {
                 return { ...msg, diagrams: [...msg.diagrams, data] };
+              } else if (data.type === 'needs_parameters') {
+                setPendingCompute({ payload, assistantMessage, saveContext });
+                setMissingParams(data.missing_params || []);
+                setParameterPrompt(data.problem_description || saveContext.currentInput);
+                setShowParamDialog(true);
+                abortControllerRef.current?.abort();
+                return {
+                  ...msg,
+                  isProcessing: false,
+                  steps: [
+                    ...msg.steps,
+                    data.message || 'Parameter is not specified.',
+                  ],
+                };
               } else if (data.type === 'error') {
                 return { ...msg, error: { message: data.message } };
               }
@@ -188,15 +164,16 @@ export default function App() {
         if (finalAssistant) {
           saveComputation({
             type: 'Computation',
-            title: currentInput?.substring(0, 50) || 'Computation',
+            title: saveContext.currentInput?.substring(0, 50) || 'Computation',
             topic: 'Engineering', // Can be enhanced to detect from routing
-            input: currentInput,
+            input: saveContext.currentInput,
             result: finalAssistant.final,
             final: finalAssistant.final,
             steps: finalAssistant.steps || [],
             diagrams: finalAssistant.diagrams || [],
+            tables: finalAssistant.tables || [],
             units: finalAssistant.units || [],
-            image: currentImage,
+            image: saveContext.currentImage,
             timestamp: Date.now()
           }).then(() => loadHistory());
         }
@@ -211,6 +188,69 @@ export default function App() {
     }
   };
 
+  const handleCompute = async (supplementalParams = null, existingPending = null) => {
+    if (!online || isProcessing) return;
+
+    const activePending = existingPending || pendingCompute;
+    if (!activePending && !inputText.trim() && !imagePreview && !dataFile) return;
+
+    const timestamp = Date.now();
+    const saveContext = activePending?.saveContext || {
+      timestamp,
+      userMessageId: timestamp.toString(),
+      currentInput: inputText,
+      currentImage: imagePreview,
+      currentData: dataFile,
+      currentConfig: plotConfig,
+    };
+
+    const assistantMessage = activePending?.assistantMessage || {
+      id: (timestamp + 1).toString(),
+      role: 'assistant',
+      isProcessing: true,
+      steps: [],
+      final: null,
+      diagrams: [],
+      tables: [],
+      units: [],
+      subProblems: {},
+      timestamp,
+    };
+
+    const payload = {
+      type: saveContext.currentImage ? 'image' : (saveContext.currentData ? 'data' : 'text'),
+      input: saveContext.currentImage || (saveContext.currentData ? saveContext.currentData.base64 : saveContext.currentInput),
+      filename: saveContext.currentData?.name,
+      plot_config: saveContext.currentConfig,
+      supplemental_params: supplementalParams || {},
+      history: messages.slice(-4).map(m => ({ role: m.role, content: m.content || '' }))
+    };
+
+    if (!activePending) {
+      setInputText('');
+      setImagePreview(null);
+      setDataFile(null);
+      setPlotConfig({ type: 'line', title: '', xlabel: '', ylabel: '' });
+    }
+
+    setPendingCompute(null);
+    await executeCompute({ payload, assistantMessage, saveContext });
+  };
+
+  const handleParameterSubmit = async (values) => {
+    if (!pendingCompute) return;
+    await handleCompute(values, pendingCompute);
+  };
+
+  const handleParameterCancel = () => {
+    abortControllerRef.current?.abort();
+    setPendingCompute(null);
+    setShowParamDialog(false);
+    setMissingParams([]);
+    setParameterPrompt('');
+    setIsProcessing(false);
+  };
+
   const deleteMessage = (id) => {
     setMessages(prev => prev.filter(m => String(m.id) !== String(id)));
   };
@@ -220,6 +260,23 @@ export default function App() {
       setMessages([]);
       await clearCurrentSession();
     }
+  };
+
+  const stopProcessing = () => {
+    abortControllerRef.current?.abort();
+    setIsProcessing(false);
+    setMessages(prev => {
+      const copy = [...prev];
+      const lastAssistantIndex = [...copy].reverse().findIndex(msg => msg.role === 'assistant' && msg.isProcessing);
+      if (lastAssistantIndex === -1) return prev;
+      const actualIndex = copy.length - 1 - lastAssistantIndex;
+      copy[actualIndex] = {
+        ...copy[actualIndex],
+        isProcessing: false,
+        steps: [...(copy[actualIndex].steps || []), 'Calculation stopped by user.'],
+      };
+      return copy;
+    });
   };
 
   return (
@@ -298,6 +355,7 @@ export default function App() {
             handleCompute={handleCompute}
             isProcessing={isProcessing}
             fileInputRef={fileInputRef}
+            onStop={stopProcessing}
           />
           <div className="mt-4 text-center">
              <p className="text-[10px] md:text-xs font-mono opacity-20 uppercase tracking-tighter">
@@ -334,6 +392,18 @@ export default function App() {
       <AnimatePresence>
         {showDocs && (
           <DocsPage onClose={() => setShowDocs(false)} />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showParamDialog && (
+          <ParameterDialog
+            isOpen={showParamDialog}
+            missingParams={missingParams}
+            problemDescription={parameterPrompt}
+            onSubmit={handleParameterSubmit}
+            onCancel={handleParameterCancel}
+          />
         )}
       </AnimatePresence>
     </div>

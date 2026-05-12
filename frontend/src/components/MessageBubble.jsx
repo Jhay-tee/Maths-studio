@@ -88,6 +88,7 @@ export default function MessageBubble({ msg, onDelete }) {
                 currentFinal={msg.final}
                 currentError={msg.error}
                 currentDiagrams={msg.diagrams || []}
+                currentTables={msg.tables || []}
                 currentUnits={msg.units || []}
                 isProcessing={msg.isProcessing}
                 compact={true}

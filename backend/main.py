@@ -1,19 +1,37 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 import os
 import json
 import asyncio
+import time
 from google import genai
 from google.genai import types
 import base64
 import logging
 import importlib
+from solvers.utils import (
+    normalize_params,
+    apply_standard_defaults,
+    merge_params,
+    find_missing_params,
+    parse_user_supplied_value,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+MAX_REQUEST_BYTES = int(os.environ.get("MAX_REQUEST_BYTES", 8 * 1024 * 1024))
+MAX_CONCURRENT_SOLVES = int(os.environ.get("MAX_CONCURRENT_SOLVES", 6))
+RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", 60))
+RATE_LIMIT_MAX_REQUESTS = int(os.environ.get("RATE_LIMIT_MAX_REQUESTS", 24))
+ROUTER_TIMEOUT_SECONDS = float(os.environ.get("ROUTER_TIMEOUT_SECONDS", 20))
+SOLVE_TIMEOUT_SECONDS = float(os.environ.get("SOLVE_TIMEOUT_SECONDS", 45))
+solve_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SOLVES)
+request_windows = {}
+request_windows_lock = asyncio.Lock()
 
 @app.get("/health")
 async def health():
@@ -25,6 +43,43 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class SafetyMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        client_ip = request.client.host if request.client else "unknown"
+
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > MAX_REQUEST_BYTES:
+                    return JSONResponse(
+                        {"error": "Request payload too large."},
+                        status_code=413,
+                    )
+            except ValueError:
+                pass
+
+        now = time.monotonic()
+        async with request_windows_lock:
+            window = request_windows.get(client_ip, [])
+            window = [stamp for stamp in window if now - stamp < RATE_LIMIT_WINDOW_SECONDS]
+            if len(window) >= RATE_LIMIT_MAX_REQUESTS:
+                return JSONResponse(
+                    {"error": "Too many requests. Please slow down and try again shortly."},
+                    status_code=429,
+                )
+            window.append(now)
+            request_windows[client_ip] = window
+
+        response = await call_next(request)
+        response.headers["X-Studio-RateLimit-Limit"] = str(RATE_LIMIT_MAX_REQUESTS)
+        response.headers["X-Studio-RateLimit-Window"] = str(RATE_LIMIT_WINDOW_SECONDS)
+        response.headers["X-Studio-Max-Concurrent-Solves"] = str(MAX_CONCURRENT_SOLVES)
+        return response
+
+
+app.add_middleware(SafetyMiddleware)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
@@ -43,16 +98,16 @@ STRICT OPERATIONAL DIRECTIVES:
 3. YOUR ONLY ROLE: Analyze the user input (text/image) and extract ALL relevant physical/mathematical parameters.
 4. MAP each sub-problem to one of these DOMAINS:
    - algebra (equations, roots, simplification, simultaneous systems)
-   - calculus (integrals, derivatives, taylor series, multivariable)
+   - calculus (integrals, derivatives, limits, differential equations, taylor series, multivariable, laplace, fourier)
    - structural (FEM, trusses, beams, frames, virtual work, moment-area)
-   - mechanics (kinematics, dynamics, projectiles, statics)
+   - mechanics (kinematics, dynamics, projectiles, statics, vibration, rotation)
    - fluids (bernoulli, pipe flow, flow meters, hydrostatics, continuity)
    - thermo (gas laws, heat transfer, cycles)
    - circuits (KVL, KCL, resistors, capacitors, ohms law)
    - physics (optics, waves, light, sound, doppler)
    - controls (transfer functions, TF, bode plots, stability, PID)
    - statistics (mean, median, standard deviation, confidence intervals, distributions)
-   - data_viz (tables, CSV data, plotting requests)
+   - data_viz (tables, CSV data, plotting requests, graphs, charts)
 
 STRICT EXPRESSION GUIDELINES:
 - Field "expression": MUST be PURE mathematical syntax. 
@@ -63,6 +118,8 @@ STRICT EXPRESSION GUIDELINES:
 WORD PROBLEM EXTRACTION:
 - For word problems, DO NOT put text in the "expression" field. 
 - Extract ALL numbers and map them to standard physics/engineering keys in "parameters".
+- If the user explicitly requests a method, include it in parameters as "method".
+- If the user asks for a graph/diagram/table/matrix view, preserve that intent in problem_type or parameters.
 - NORMALIZE ALL UNITS TO SI (meters, kilograms, seconds, Newtons, Pascals).
   - e.g. "12kN" -> 12000, "5cm" -> 0.05, "10 min" -> 600.
 - Examples: 
@@ -161,14 +218,17 @@ async def route_input(input_data: str, is_image: bool, history: list = None) -> 
                     )
                 )
 
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model=model_name,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=ROUTING_SYSTEM_PROMPT,
-                    temperature=0.1,  # Low temp = deterministic routing
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    client.models.generate_content,
+                    model=model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=ROUTING_SYSTEM_PROMPT,
+                        temperature=0.1,  # Low temp = deterministic routing
+                    ),
                 ),
+                timeout=ROUTER_TIMEOUT_SECONDS,
             )
 
             text = response.text.replace("```json", "").replace("```", "").strip()
@@ -181,6 +241,10 @@ async def route_input(input_data: str, is_image: bool, history: list = None) -> 
             logger.error(f"Model {model_name} returned invalid JSON: {e}")
             last_error = f"Router returned invalid JSON: {str(e)}"
             break
+        except asyncio.TimeoutError:
+            logger.warning(f"Model {model_name} timed out in router")
+            last_error = "Routing timed out while extracting parameters."
+            continue
         except Exception as e:
             logger.warning(f"Model {model_name} failed in router: {e}")
             last_error = str(e)
@@ -272,6 +336,7 @@ async def health():
 
 @app.post("/solve")
 async def solve(request: Request):
+    acquired_slot = False
     try:
         raw_data = await request.json()
     except Exception:
@@ -289,96 +354,158 @@ async def solve(request: Request):
             yield make_error_event("No input provided")
         return StreamingResponse(_missing(), media_type="text/event-stream")
 
+    try:
+        await asyncio.wait_for(solve_semaphore.acquire(), timeout=2.0)
+        acquired_slot = True
+    except asyncio.TimeoutError:
+        async def _busy():
+            yield make_error_event("Studio kernel is busy. Please retry in a few seconds.")
+        return StreamingResponse(_busy(), media_type="text/event-stream")
+
     async def event_generator():
-        # ── Step 1: Route via Gemini (classify only) ──
-        yield make_event({
-            "type": "step",
-            "content": "Studio Kernel: Classifying and extracting parameters...",
-        })
+        try:
+            # ── Step 1: Route via Gemini (classify only) ──
+            if input_type == "data":
+                yield make_event({
+                    "type": "step",
+                    "content": "Studio Kernel: Loading dataset and preparing visualization pipeline...",
+                })
+                routing = {
+                    "summary": "Dataset visualization request",
+                    "_model": "direct-data-route",
+                    "sub_problems": [
+                        {
+                            "id": "p1",
+                            "domain": "data_viz",
+                            "problem_type": "table_plot",
+                            "input_summary": raw_data.get("filename", "Uploaded dataset"),
+                            "parameters": {
+                                "table_data": user_input,
+                            },
+                            "confidence": 1.0,
+                        }
+                    ],
+                }
+            else:
+                yield make_event({
+                    "type": "step",
+                    "content": "Studio Kernel: Classifying and extracting parameters...",
+                })
 
-        routing = await route_input(user_input, is_image, history)
+                routing = await route_input(user_input, is_image, history)
 
-        if "error" in routing:
-            yield make_error_event("Routing Failed: " + routing["error"])
-            return
+            if "error" in routing:
+                yield make_error_event("Routing Failed: " + routing["error"])
+                return
 
-        sub_problems = routing.get("sub_problems", [])
+            sub_problems = routing.get("sub_problems", [])
 
-        # Fallback: single-object response
-        if not sub_problems and "domain" in routing:
-            sub_problems = [routing]
+            if not sub_problems and "domain" in routing:
+                sub_problems = [routing]
 
-        if not sub_problems:
-            yield make_error_event("Could not extract any problems from the input. Please rephrase.")
-            return
-
-        yield make_event({
-            "type": "meta",
-            "summary": routing.get("summary", "Processing problems..."),
-            "model": routing.get("_model", "unknown"),
-            "count": len(sub_problems),
-        })
-
-        # ── Step 2: Dispatch each sub-problem to the correct solver ──
-        for idx, sub in enumerate(sub_problems):
-            domain = sub.get("domain", "unknown").lower()
-            problem_type = sub.get("problem_type", "unknown").lower()
-            problem_id = sub.get("id", f"p{idx}")
-            confidence = sub.get("confidence", 0.0)
+            if not sub_problems:
+                yield make_error_event("Could not extract any problems from the input. Please rephrase.")
+                return
 
             yield make_event({
-                "type": "step",
-                "content": f"Dispatching Sub-problem {idx + 1}: [{domain}] {problem_type} (confidence: {confidence:.0%})",
+                "type": "meta",
+                "summary": routing.get("summary", "Processing problems..."),
+                "model": routing.get("_model", "unknown"),
+                "count": len(sub_problems),
             })
 
-            # Pass parameters extracted by Gemini into the sub dict
-            # so solvers can access sub["parameters"] directly
-            if "parameters" not in sub:
-                sub["parameters"] = {}
-            
-            # Normalize parameters to standard engineering keys
-            from solvers.utils import normalize_params
-            sub["parameters"] = normalize_params(sub["parameters"])
+            for idx, sub in enumerate(sub_problems):
+                domain = sub.get("domain", "unknown").lower()
+                problem_type = sub.get("problem_type", "unknown").lower()
+                problem_id = sub.get("id", f"p{idx}")
+                confidence = sub.get("confidence", 0.0)
 
-            # Also keep input_summary accessible as raw_query for solver compatibility
-            sub["raw_query"] = sub.get("input_summary", user_input)
-            sub["topic"] = domain  # backward-compat with solvers that read sub["topic"]
-
-            solver_fn = select_solver(domain, problem_type)
-
-            if not solver_fn:
                 yield make_event({
-                    "type": "final",
-                    "answer": f"No solver available for domain '{domain}' / type '{problem_type}'.",
-                    "problem_id": problem_id,
+                    "type": "step",
+                    "content": f"Dispatching Sub-problem {idx + 1}: [{domain}] {problem_type} (confidence: {confidence:.0%})",
                 })
-                continue
 
-            try:
-                async for chunk in solver_fn(sub):
-                    chunk["problem_id"] = problem_id
+                if "parameters" not in sub:
+                    sub["parameters"] = {}
 
-                    # Option matching on final chunk
-                    if chunk.get("type") == "final" and sub.get("options"):
-                        ans_text = str(chunk.get("answer", ""))
-                        matched = False
-                        for opt in sub["options"]:
-                            opt_label = str(opt.get("label", "")).lower()
-                            opt_val = str(opt.get("val", ""))
-                            if opt_label in ans_text.lower() or opt_val in ans_text:
-                                chunk["answer"] = ans_text + f"\n\n**Correct Option: {opt['label']}**"
-                                matched = True
-                                break
-                        if not matched:
-                            chunk["answer"] = ans_text + "\n\n**Note: No option matched the computed result.**"
-
-                    yield make_event(chunk)
-
-            except Exception as e:
-                logger.error(f"Solver error in sub-problem {idx} ({domain}/{problem_type}): {e}")
-                yield make_error_event(
-                    f"Solver Error [{domain}]: {str(e)}", problem_id
+                supplemental_params = raw_data.get("supplemental_params", {})
+                parsed_supplemental = {
+                    key: parse_user_supplied_value(value)
+                    for key, value in supplemental_params.items()
+                }
+                sub["parameters"] = apply_standard_defaults(
+                    merge_params(sub["parameters"], parsed_supplemental)
                 )
+                if raw_data.get("plot_config"):
+                    sub["parameters"]["plot_config"] = raw_data.get("plot_config", {})
+
+                sub["raw_query"] = sub.get("input_summary", user_input)
+                sub["topic"] = domain
+                sub["requested_method"] = (
+                    sub["parameters"].get("method")
+                    or raw_data.get("method")
+                    or None
+                )
+
+                missing = find_missing_params(
+                    domain,
+                    problem_type,
+                    sub["parameters"],
+                    sub["raw_query"],
+                )
+                if missing:
+                    yield make_event({
+                        "type": "needs_parameters",
+                        "problem_id": problem_id,
+                        "message": "Parameter is not specified.",
+                        "missing_params": missing,
+                        "problem_description": sub.get("input_summary", user_input),
+                    })
+                    return
+
+                solver_fn = select_solver(domain, problem_type)
+
+                if not solver_fn:
+                    yield make_event({
+                        "type": "final",
+                        "answer": f"No solver available for domain '{domain}' / type '{problem_type}'.",
+                        "problem_id": problem_id,
+                    })
+                    continue
+
+                try:
+                    async with asyncio.timeout(SOLVE_TIMEOUT_SECONDS):
+                        async for chunk in solver_fn(sub):
+                            chunk["problem_id"] = problem_id
+
+                            if chunk.get("type") == "final" and sub.get("options"):
+                                ans_text = str(chunk.get("answer", ""))
+                                matched = False
+                                for opt in sub["options"]:
+                                    opt_label = str(opt.get("label", "")).lower()
+                                    opt_val = str(opt.get("val", ""))
+                                    if opt_label in ans_text.lower() or opt_val in ans_text:
+                                        chunk["answer"] = ans_text + f"\n\n**Correct Option: {opt['label']}**"
+                                        matched = True
+                                        break
+                                if not matched:
+                                    chunk["answer"] = ans_text + "\n\n**Note: No option matched the computed result.**"
+
+                            yield make_event(chunk)
+                except TimeoutError:
+                    logger.warning(f"Solver timeout in sub-problem {idx} ({domain}/{problem_type})")
+                    yield make_error_event(
+                        f"Solver Timeout [{domain}]: computation exceeded the safe time limit.",
+                        problem_id,
+                    )
+                except Exception as e:
+                    logger.error(f"Solver error in sub-problem {idx} ({domain}/{problem_type}): {e}")
+                    yield make_error_event(
+                        f"Solver Error [{domain}]: {str(e)}", problem_id
+                    )
+        finally:
+            if acquired_slot:
+                solve_semaphore.release()
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

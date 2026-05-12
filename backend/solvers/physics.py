@@ -102,7 +102,7 @@ async def solve_kinematics(params):
         steps.append(f"- Calculated Displacement ($s = \\frac{u+v}{2}t$): {s_calc:.2f} m")
     elif u and a and s and not v:
         v_calc = np.sqrt(u**2 + 2*a*s)
-        steps.append(f"- Calculated Final Velocity ($v = \\sqrt{u^2 + 2as}$): {v_calc:.2f} m/s")
+        steps.append(f"- Calculated Final Velocity ($v = \\sqrt{{u^2 + 2as}}$): {v_calc:.2f} m/s")
     elif v and a and t and not u:
         u_calc = v - a*t
         steps.append(f"- Calculated Initial Velocity ($u = v - at$): {u_calc:.2f} m/s")

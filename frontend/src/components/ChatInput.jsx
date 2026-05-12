@@ -1,5 +1,5 @@
-import React, { useRef } from 'react';
-import { Plus, Send, X, Image as ImageIcon, Loader2 } from 'lucide-react';
+import React from 'react';
+import { Plus, Send, X, Image as ImageIcon, Square } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function ChatInput({ 
@@ -13,7 +13,8 @@ export default function ChatInput({
   setPlotConfig,
   handleCompute, 
   isProcessing, 
-  fileInputRef 
+  fileInputRef,
+  onStop
 }) {
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -163,17 +164,26 @@ export default function ChatInput({
             rows={1}
           />
 
-          <button 
-            onClick={handleCompute}
-            disabled={isProcessing || (!inputText.trim() && !imagePreview && !dataFile)}
-            className={`p-3 rounded-full transition-all mb-1 ${
-              isProcessing || (!inputText.trim() && !imagePreview && !dataFile)
-              ? 'bg-white/5 text-white/10 cursor-not-allowed'
-              : 'bg-white text-black hover:scale-105 active:scale-95 shadow-xl'
-            }`}
-          >
-            {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-          </button>
+          {isProcessing ? (
+            <button
+              onClick={onStop}
+              className="p-3 rounded-full transition-all mb-1 bg-red-500 text-white hover:scale-105 active:scale-95 shadow-xl"
+            >
+              <Square className="w-5 h-5" />
+            </button>
+          ) : (
+            <button 
+              onClick={handleCompute}
+              disabled={!inputText.trim() && !imagePreview && !dataFile}
+              className={`p-3 rounded-full transition-all mb-1 ${
+                (!inputText.trim() && !imagePreview && !dataFile)
+                ? 'bg-white/5 text-white/10 cursor-not-allowed'
+                : 'bg-white text-black hover:scale-105 active:scale-95 shadow-xl'
+              }`}
+            >
+              <Send className="w-5 h-5" />
+            </button>
+          )}
         </div>
       </div>
     </div>

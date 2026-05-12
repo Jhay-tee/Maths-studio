@@ -126,7 +126,10 @@ async def solve_data_viz(sub: dict):
             plt.ylabel(custom_ylabel or "Stress (σ) [Pa]")
             plt.title(custom_title or "Stress-Strain Curve Analysis")
             plot_results['modulus'] = z[0]
-        elif len(numeric_cols) >= 2:
+        else:
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+
+        if len(numeric_cols) >= 2:
             x_col = plot_config.get("x") or numeric_cols[0]
             y_col = plot_config.get("y") or numeric_cols[1]
             x, y = df[x_col].values, df[y_col].values
@@ -151,6 +154,19 @@ async def solve_data_viz(sub: dict):
             plt.xlabel(custom_xlabel or x_col)
             plt.ylabel(custom_ylabel or y_col)
             plt.title(custom_title or f"{y_col} vs {x_col} Analysis")
+        else:
+            plt.close()
+            yield {
+                "type": "table",
+                "title": "Uploaded dataset preview",
+                "columns": list(df.columns),
+                "rows": df.head(100).to_dict(orient="records"),
+            }
+            yield {
+                "type": "final",
+                "answer": "### Data Table Loaded\nA readable table preview is available below. Add at least two numeric columns to generate a graph automatically.",
+            }
+            return
             
         plt.grid(True, linestyle='--', alpha=0.2)
         plt.legend()
@@ -181,6 +197,12 @@ async def solve_data_viz(sub: dict):
                 "table_json": df.head(100).to_dict(orient='records'),
                 "columns": list(df.columns)
             }
+        }
+        yield {
+            "type": "table",
+            "title": "Dataset preview",
+            "columns": list(df.columns),
+            "rows": df.head(100).to_dict(orient="records"),
         }
         
         answer = "### Technical Data Report\n"
