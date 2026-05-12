@@ -103,7 +103,10 @@ export default function App() {
     const API_BASE = import.meta.env.VITE_BACKEND_URL || '';
 
     try {
-      const endpoint = API_BASE ? `${API_BASE}/solve` : '/api/compute';
+      // Production has only FastAPI backend (no Express proxy server/).
+      // FastAPI SSE endpoint:
+      // POST /api/compute/solve
+      const endpoint = API_BASE ? `${API_BASE}/api/compute/solve` : '/api/compute/solve';
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
