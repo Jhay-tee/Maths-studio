@@ -1,7 +1,7 @@
 import asyncio
 import numpy as np
 from solvers.constants import G
-from solvers.utils import normalize_params, validate_physical_params
+from solvers.utils import normalize_params, validate_physical_params, propagate_uncertainty
 
 
 def series_points(x_values, y_values):
@@ -88,6 +88,17 @@ async def solve_projectile(params):
     t_peak = vy / g if g else 0.0
     range_x = vx * t_flight
 
+    # Uncertainty Analysis
+    uncertainties = {k.replace("_sigma", ""): v for k, v in params.items() if k.endswith("_sigma")}
+    range_sigma = 0
+    if uncertainties:
+        # Example: Propagate for Range R = vx * t_flight
+        # R = (v0 cos theta) * (v0 sin theta + sqrt((v0 sin theta)^2 + 2 g y0)) / g
+        # Using the helper
+        expr = f"(v0 * cos(theta * pi / 180)) * (v0 * sin(theta * pi / 180) + sqrt((v0 * sin(theta * pi / 180))**2 + 2 * g * y0)) / g"
+        p_eval = {"v0": v0, "theta": theta_deg, "y0": y0, "g": g, "pi": np.pi}
+        range_sigma = propagate_uncertainty(expr, p_eval, uncertainties)
+
     t = np.linspace(0, max(t_flight, 1e-6), 120)
     x = vx * t
     y = y0 + vy * t - 0.5 * g * t ** 2
@@ -97,18 +108,19 @@ async def solve_projectile(params):
     steps = [
         "### Projectile Motion Report",
         f"**Method Used:** {params.get('method', 'governing equations').title()}",
-        f"- Initial speed: {v0:.3f} m/s",
-        f"- Launch angle: {theta_deg:.3f} deg",
-        f"- Initial height: {y0:.3f} m",
-        "#### Resolved Components",
-        f"- Horizontal velocity: $v_x = v_0 \\cos\\theta = {vx:.3f}$ m/s",
-        f"- Vertical velocity: $v_y = v_0 \\sin\\theta = {vy:.3f}$ m/s",
-        "#### Flight Results",
-        f"- Time to peak: {t_peak:.3f} s",
+        f"- Initial velocity ($v_0$): {v0:.3f} m/s",
+        f"- Launch angle ($\\theta$): {theta_deg:.3f}°",
+        f"- Initial height ($y_0$): {y0:.3f} m",
+        "#### Flight Dynamics Results",
         f"- Total flight time: {t_flight:.3f} s",
-        f"- Maximum height: {h_max:.3f} m",
-        f"- Horizontal range: {range_x:.3f} m",
+        f"- Maximum altitude: {h_max:.3f} m",
+        f"- Horizontal range ($R$): {range_x:.3f} m",
     ]
+
+    if range_sigma > 0:
+        from solvers.utils import append_uncertainty_to_final
+        steps = append_uncertainty_to_final(steps, "Horizontal Range", range_x, range_sigma, "m")
+
     yield {"type": "final", "answer": "\n".join(steps)}
 
 

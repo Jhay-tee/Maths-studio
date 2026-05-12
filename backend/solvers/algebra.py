@@ -1,7 +1,17 @@
 import asyncio
 import sympy as sp
 import re
-from solvers.utils import safe_sympify, clean_math_string, simplify_math, detect_variables
+from solvers.utils import (
+    normalize_params, 
+    validate_physical_params, 
+    propagate_uncertainty, 
+    detect_matrix, 
+    parse_matrix,
+    clean_math_string,
+    detect_variables,
+    safe_sympify,
+    simplify_math
+)
 
 async def solve_algebra(data):
     yield {"type": "step", "content": "Initializing Algebra Engine..."}
@@ -10,6 +20,27 @@ async def solve_algebra(data):
     expr_str = params.get("expression", data.get("raw_query", ""))
     expr_str = clean_math_string(expr_str)
     preferred_method = data.get("requested_method") or params.get("method") or "standard symbolic solving"
+
+    # Detect Uncertainty Request
+    if any(k.endswith("_sigma") for k in params.keys()):
+        yield {"type": "step", "content": "Uncertainty parameters detected. Running propagation kernel..."}
+        # Pure math uncertainty propagation if no other domain caught it
+        uncertainties = {k.replace("_sigma", ""): v for k, v in params.items() if k.endswith("_sigma")}
+        nominal_params = {k: v for k, v in params.items() if not k.endswith("_sigma")}
+        
+        try:
+            expr = safe_sympify(expr_str)
+            result_val = float(expr.subs(nominal_params))
+            sigma = propagate_uncertainty(expr, nominal_params, uncertainties)
+            
+            steps = ["### Mathematical Uncertainty Report"]
+            steps.append(f"- **Expression:** ${sp.latex(expr)}$")
+            from solvers.utils import append_uncertainty_to_final
+            steps = append_uncertainty_to_final(steps, "Result", result_val, sigma)
+            yield {"type": "final", "answer": "\n".join(steps)}
+            return
+        except Exception:
+            pass # Fall through to standard solve
     
     if not expr_str:
         yield {"type": "final", "answer": "Error: No algebraic expression found to solve."}
@@ -43,59 +74,41 @@ async def solve_algebra(data):
             equations_raw = [e.strip() for e in expr_str.split(",") if e.strip()]
         
         # Detect Matrix Operations
-        if "[" in expr_str and "]" in expr_str:
-            yield {"type": "step", "content": f"Detected matrix structure. Using {preferred_method} for linear algebra analysis..."}
-            # Simple matrix parsing from string like [[1,2],[3,4]]
-            import ast
-            try:
-                # Clean string for ast.literal_eval
-                matrix_raw = expr_str.strip()
-                if "=" in matrix_raw: matrix_raw = matrix_raw.split("=")[-1].strip()
-                
-                # Try to find the matrix within the string if it's not the whole string
-                start = matrix_raw.find("[")
-                end = matrix_raw.rfind("]") + 1
-                matrix_data = ast.literal_eval(matrix_raw[start:end])
-                
-                M = sp.Matrix(matrix_data)
+        if detect_matrix(expr_str):
+            yield {"type": "step", "content": f"Matrix detected. Performing linear algebra analysis..."}
+            M = parse_matrix(expr_str)
+            if M:
                 rows, cols = M.shape
-                
-                steps = ["### Linear Algebra Analysis", f"**Method Used:** {preferred_method.title()}"]
+                steps = ["### Matrix Analysis"]
                 steps.append(f"Matrix $M = {sp.latex(M)}$")
                 steps.append(f"Dimensions: {rows}x{cols}")
+                
                 yield {
                     "type": "diagram",
                     "diagram_type": "matrix",
                     "data": {
-                        "rows": rows,
-                        "cols": cols,
-                        "values": matrix_data,
-                        "caption": "Matrix interpreted from the user input.",
-                    },
+                        "rows": rows, "cols": cols,
+                        "values": M.tolist(), # Convert to list of lists
+                        "caption": "Parsed Matrix structure."
+                    }
                 }
                 
                 if rows == cols:
-                    yield {"type": "step", "content": "Computing Determinant and Inverse..."}
+                    yield {"type": "step", "content": "Calculating determinant and inverse..."}
                     det = M.det()
                     steps.append(f"- **Determinant:** $|M| = {sp.latex(det)}$")
-                    
                     if det != 0:
-                        inv = M.inv()
-                        steps.append(f"- **Inverse:** $M^{{-1}} = {sp.latex(inv)}$")
-                    else:
-                        steps.append("- **Inverse:** Matrix is singular (determinant is zero).")
+                        steps.append(f"- **Inverse:** $M^{{-1}} = {sp.latex(M.inv())}$")
                     
-                    if rows <= 3: # Limit eigenvalues for speed
-                        yield {"type": "step", "content": "Calculating Eigenvalues..."}
+                    if rows < 4:
+                        yield {"type": "step", "content": "Analyzing eigenvalues..."}
                         eigs = M.eigenvals()
                         steps.append("**Eigenvalues:**")
-                        for val, mult in eigs.items():
-                            steps.append(f"- $\\lambda = {sp.latex(val)}$ (multiplicity: {mult})")
+                        for e, m in eigs.items():
+                            steps.append(f"- $\\lambda = {sp.latex(e)}$ (mult: {m})")
                 
                 yield {"type": "final", "answer": "\n".join(steps)}
                 return
-            except Exception as me:
-                yield {"type": "step", "content": f"Matrix parsing failed: {str(me)}. Falling back to expression solving."}
         
         # Determine if we have multiple equations or a single one
         if len(equations_raw) > 1:
@@ -163,6 +176,7 @@ async def solve_algebra(data):
                     system_steps.append(f"Result: $${sp.latex(sol_dict)}$$")
             
             yield {"type": "final", "answer": "\n".join(system_steps)}
+            return
 
         else:
             # Single equation: Check for Quadratic or higher polynomial
@@ -176,7 +190,7 @@ async def solve_algebra(data):
                 equation = sp.Eq(safe_sympify(eq_text, symbols=symbols), 0)
             
             # Target variable
-            target_var = symbols[vars_to_use[0]] if vars_to_use else sp.Symbol('x')
+            target_var = symbols[vars_detected[0]] if vars_detected else sp.Symbol('x')
             yield {"type": "step", "content": f"Solving for {target_var}..."}
             
             solutions = sp.solve(equation, target_var)

@@ -139,12 +139,13 @@ async def solve_function_plot(sub):
         
         if len(independent_vars) >= 2:
             # 3D Plot logic
-            yield {"type": "step", "content": "Detecting multivariable function. Generating 3D surface plot..."}
+            yield {"type": "step", "content": "Multivariable expression detected. Generating 3D topographic surface..."}
             v1, v2 = independent_vars[0], independent_vars[1]
             f_3d = sp.lambdify((v1, v2), func_expr, "numpy")
             
-            x_mesh = np.linspace(x_min, x_max, 50)
-            y_mesh = np.linspace(x_min, x_max, 50)
+            # Use higher density for smoother surface
+            x_mesh = np.linspace(x_min, x_max, 60)
+            y_mesh = np.linspace(x_min, x_max, 60)
             X, Y = np.meshgrid(x_mesh, y_mesh)
             
             try:
@@ -152,18 +153,35 @@ async def solve_function_plot(sub):
                 if np.isscalar(Z):
                     Z = np.full_like(X, float(Z))
                 
+                # Filter out exploding values (singularities)
+                Z = np.clip(Z, -1e6, 1e6)
+                
                 from mpl_toolkits.mplot3d import Axes3D
-                fig = plt.figure(figsize=(12, 8))
+                fig = plt.figure(figsize=(10, 8), dpi=100)
                 ax = fig.add_subplot(111, projection='3d')
-                surf = ax.plot_surface(X, Y, Z, cmap='viridis', edgecolor='none', alpha=0.8)
-                fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5)
-                ax.set_title(f"3D Surface: $z = {sp.latex(func_expr)}$")
-                ax.set_xlabel(v1.name)
-                ax.set_ylabel(v2.name)
-                ax.set_zlabel("z")
+                
+                # Engineering-style surface
+                surf = ax.plot_surface(X, Y, Z, cmap='plasma', edgecolor='none', alpha=0.9, 
+                                     antialiased=True, rcount=100, ccount=100)
+                
+                # Add contours on the bottom plane
+                offset = np.min(Z) if not np.isnan(np.min(Z)) else -10
+                ax.contour(X, Y, Z, zdir='z', offset=offset, cmap='plasma', alpha=0.5)
+                
+                fig.colorbar(surf, ax=ax, shrink=0.5, aspect=10, pad=0.1)
+                
+                ax.set_title(f"3D Analysis: $z = {sp.latex(func_expr)}$", pad=20)
+                ax.set_xlabel(v1.name, labelpad=10)
+                ax.set_ylabel(v2.name, labelpad=10)
+                ax.set_zlabel("Result ($z$)", labelpad=10)
+                
+                # Set viewing angle for better perspective
+                ax.view_init(elev=25, azim=45)
+                
                 plt.style.use('dark_background')
+                plt.tight_layout()
             except Exception as e3d:
-                raise ValueError(f"3D Plotting failed: {str(e3d)}")
+                raise ValueError(f"3D computation error: {str(e3d)}")
         else:
             # 2D Plot
             f_lambdified = sp.lambdify(x_sym, func_expr, "numpy")

@@ -128,7 +128,13 @@ STRICT EXPRESSION GUIDELINES:
 WORD PROBLEM EXTRACTION:
 - For word problems, DO NOT put the full text in the "expression" field. 
 - Extract ALL numbers and map them to standard physics/engineering keys in "parameters".
-- CONTEXT MATTERS: If a problem is about "water bubbles" or "oil in a pipe", set domain="fluids". If it's about "beams" or "columns", set domain="structural".
+- CONTEXT MATTERS:
+  - Beam analysis keywords: "simply supported", "cantilever", "deflection", "slope", "point load", "udl" -> domain="structural".
+  - Control systems keywords: "transfer function", "poles", "zeros", "bode plot", "frequency response", "step response" -> domain="controls".
+  - Data viz keywords: "plot", "surface", "experimental data", "stress-strain" -> domain="data_viz".
+- UNCERTAINTY EXTRACTION: If parameters have tolerances (e.g. "10 +/- 0.5m", "mass 5kg with 2% error"), extract the nominal value and the absolute uncertainty. 
+  - Use suffix "_sigma" for uncertainty (e.g. "m": 10, "m_sigma": 0.5).
+  - For percentage, convert to absolute (e.g. 5kg +/- 2% -> m=5, m_sigma=0.1).
 - DO NOT fallback to "algebra" just because there is an unknown. Algebra implies PURE equation solving with no physical context.
 - CHECK FOR IMPOSSIBILITIES: If the input describes something impossible (e.g. mass = -5kg), extract the parameters anyway, but the solvers will handle the error.
 - SPLIT multi-part questions into separate items in `sub_problems` (e.g. "Find the force AND the work done").
@@ -136,6 +142,7 @@ WORD PROBLEM EXTRACTION:
   - e.g. "12kN" -> 12000, "5cm" -> 0.05, "10 min" -> 600, "200 GPa" -> 2e11.
 - Examples: 
   - "velocity 5m/s" -> {"v": 5}
+  - "velocity 10 +/- 0.2 m/s" -> {"v": 10, "v_sigma": 0.2}
   - "length 10m" -> {"L": 10}
   - "mass 2kg" -> {"m": 2}
   - "at the center" of 6m beam -> {"P_pos": 3}

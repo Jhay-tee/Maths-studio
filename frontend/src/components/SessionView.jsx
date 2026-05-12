@@ -12,56 +12,87 @@ const SessionView = ({
   currentTables = [],
   currentUnits,
   isProcessing,
-  compact = false
 }) => {
   return (
-    <div className={`w-full space-y-8 ${compact ? '' : 'max-w-6xl mx-auto pb-32'}`}>
-      {!compact && (
-        <header className="space-y-4 border-l-2 border-white/20 pl-6">
-          <div className="space-y-1">
-            <h2 className="text-2xl font-black tracking-tight uppercase">Computation Studio</h2>
+    <div className="w-full max-w-4xl mx-auto pb-44 space-y-12">
+      <header className="pt-8 pb-4 border-b border-white/5 flex items-end justify-between">
+        <div className="space-y-1">
+          <h2 className="text-3xl font-black tracking-tighter uppercase text-white/90">Technical Report</h2>
+          <p className="text-[10px] font-mono opacity-30 uppercase tracking-[0.2em]">Generated via Compute Kernel • {new Date().toLocaleDateString()}</p>
+        </div>
+        <div className="text-[10px] font-mono flex items-center gap-3">
+          <span className={`px-2 py-0.5 rounded-full ${isProcessing ? 'bg-blue-500/10 text-blue-400 animate-pulse' : 'bg-green-500/10 text-green-400'}`}>
+            {isProcessing ? 'SOLVING' : 'COMPLETED'}
+          </span>
+        </div>
+      </header>
+
+      {/* 1. Methodology & Steps */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-4 text-[10px] font-black uppercase tracking-widest text-white/20">
+          <div className="h-px flex-1 bg-white/5" />
+          <span>I. Computational Sequence</span>
+          <div className="h-px flex-1 bg-white/5" />
+        </div>
+        <SolutionStream steps={currentSteps} final={null} error={currentError} isStreaming={isProcessing} />
+      </section>
+
+      {/* 2. Graphical Analysis */}
+      {currentDiagrams.length > 0 && (
+        <section className="space-y-8 py-4">
+          <div className="flex items-center gap-4 text-[10px] font-black uppercase tracking-widest text-white/20">
+            <div className="h-px flex-1 bg-white/5" />
+            <span>II. Graphical Analysis</span>
+            <div className="h-px flex-1 bg-white/5" />
           </div>
-          <div className="text-[10px] font-mono opacity-50 uppercase flex items-center gap-4">
-            <span>{new Date().toLocaleString()}</span>
-            <span>|</span>
-            <span className="text-blue-400">STATUS: {isProcessing ? 'STREAMING' : 'COMPLETE'}</span>
+          <div className="grid grid-cols-1 gap-8">
+            {currentDiagrams.map((diag, i) => (
+              <StudioCanvas key={i} type={diag.diagram_type} data={diag.data} width={800} height={400} />
+            ))}
           </div>
-        </header>
+        </section>
       )}
 
-      {currentUnits && currentUnits.length > 0 && (
-        <UnitLens units={currentUnits} />
+      {/* 3. Numerical Data */}
+      {currentTables.length > 0 && (
+        <section className="space-y-8 py-4">
+          <div className="flex items-center gap-4 text-[10px] font-black uppercase tracking-widest text-white/20">
+            <div className="h-px flex-1 bg-white/5" />
+            <span>III. Tabulated Results</span>
+            <div className="h-px flex-1 bg-white/5" />
+          </div>
+          <div className="space-y-6">
+            {currentTables.map((table, index) => (
+              <DataTable
+                key={`${table.title || 'table'}-${index}`}
+                data={table.rows || []}
+                columns={table.columns || []}
+                title={table.title}
+              />
+            ))}
+          </div>
+        </section>
       )}
 
-      <div className={`grid grid-cols-1 ${compact ? '' : 'xl:grid-cols-[minmax(0,1.18fr)_minmax(320px,0.82fr)]'} gap-10 items-start`}>
-        <div className="space-y-6">
-          <SolutionStream steps={currentSteps} final={currentFinal} error={currentError} isStreaming={isProcessing} />
-          {currentTables.length > 0 && (
-            <div className="space-y-5">
-              <h3 className="text-[10px] font-black uppercase tracking-[0.28em] text-white/30">Tables</h3>
-              {currentTables.map((table, index) => (
-                <DataTable
-                  key={`${table.title || 'table'}-${index}`}
-                  data={table.rows || []}
-                  columns={table.columns || []}
-                  title={table.title}
-                />
-              ))}
+      {/* 4. Final Verification */}
+      {currentFinal && (
+        <section className="space-y-8 pt-10 border-t-4 border-double border-white/5">
+          <div className="flex items-center gap-4 text-[10px] font-black uppercase tracking-widest text-white/20">
+            <div className="h-px flex-1 bg-white/5" />
+            <span>IV. Synthesis & Verification</span>
+            <div className="h-px flex-1 bg-white/5" />
+          </div>
+          <div className="bg-white/5 rounded-3xl p-8 border border-white/10 shadow-inner">
+             <SolutionStream steps={[]} final={currentFinal} error={null} isStreaming={false} />
+          </div>
+          
+          {currentUnits && currentUnits.length > 0 && (
+            <div className="pt-8">
+              <UnitLens units={currentUnits} />
             </div>
           )}
-        </div>
-
-        {currentDiagrams.length > 0 && (
-          <div className="space-y-5 xl:sticky xl:top-24">
-            <h3 className="text-[10px] font-black uppercase tracking-[0.28em] text-white/30">Technical Visuals</h3>
-            <div className="space-y-6">
-              {currentDiagrams.map((diag, i) => (
-                <StudioCanvas key={i} type={diag.diagram_type} data={diag.data} />
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+        </section>
+      )}
     </div>
   );
 };

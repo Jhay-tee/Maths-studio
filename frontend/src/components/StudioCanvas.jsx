@@ -5,9 +5,12 @@ import DataTable from './DataTable';
 
 const StudioCanvas = ({ type, data, width = 600, height = 300 }) => {
   const canvasRef = useRef(null);
+  const animationRef = useRef(null);
+  const startTimeRef = useRef(Date.now());
 
-  const renderDiagram = (diagramData) => {
+  const renderDiagram = (diagramData, time = 0) => {
     const canvas = canvasRef.current;
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const w = canvas.width;
     const h = canvas.height;
@@ -18,8 +21,8 @@ const StudioCanvas = ({ type, data, width = 600, height = 300 }) => {
 
     if (type === 'force_diagram') {
       renderForceDiagram(ctx, w, h, diagramData);
-    } else if (type === 'vibration_response') {
-      renderVibrationDiagram(ctx, w, h, diagramData);
+    } else if (type === 'vibration_response' || type === 'time_series') {
+      renderVibrationDiagram(ctx, w, h, diagramData, time);
     } else if (type === 'trajectory') {
       renderTrajectoryDiagram(ctx, w, h, diagramData);
     } else if (type === 'circuit_ohms') {
@@ -30,7 +33,134 @@ const StudioCanvas = ({ type, data, width = 600, height = 300 }) => {
       renderBeamDiagrams(ctx, w, h, diagramData);
     } else if (type === 'matrix') {
       renderMatrixDiagram(ctx, w, h, diagramData);
+    } else if (type === 'bode_plot') {
+      renderBodePlot(ctx, w, h, diagramData);
+    } else if (type === 'truss_fem') {
+      renderTrussDiagram(ctx, w, h, diagramData);
     }
+  };
+
+  const renderTrussDiagram = (ctx, w, h, data) => {
+    const { nodes, elements, U, scale = 100 } = data;
+    if (!nodes || !elements) return;
+
+    const padding = 60;
+    const minX = Math.min(...nodes.map(n => n[0]));
+    const maxX = Math.max(...nodes.map(n => n[0]));
+    const minY = Math.min(...nodes.map(n => n[1]));
+    const maxY = Math.max(...nodes.map(n => n[1]));
+
+    const rangeX = maxX - minX || 1;
+    const rangeY = maxY - minY || 1;
+    const drawingScale = Math.min((w - 2 * padding) / rangeX, (h - 2 * padding) / rangeY);
+
+    const getX = (nx) => padding + (nx - minX) * drawingScale;
+    const getY = (ny) => h - padding - (ny - minY) * drawingScale;
+
+    // Original Structure
+    ctx.setLineDash([5, 5]);
+    ctx.strokeStyle = '#ffffff44';
+    ctx.lineWidth = 1;
+    elements.forEach(([i, j]) => {
+      ctx.beginPath();
+      ctx.moveTo(getX(nodes[i][0]), getY(nodes[i][1]));
+      ctx.lineTo(getX(nodes[j][0]), getY(nodes[j][1]));
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+
+    // Deformed Structure
+    ctx.strokeStyle = '#60a5fa';
+    ctx.lineWidth = 3;
+    elements.forEach(([i, j]) => {
+      const uix = U ? U[2 * i] : 0;
+      const uiy = U ? U[2 * i + 1] : 0;
+      const ujx = U ? U[2 * j] : 0;
+      const ujy = U ? U[2 * j + 1] : 0;
+
+      ctx.beginPath();
+      ctx.moveTo(getX(nodes[i][0] + uix * scale), getY(nodes[i][1] + uiy * scale));
+      ctx.lineTo(getX(nodes[j][0] + ujx * scale), getY(nodes[j][1] + ujy * scale));
+      ctx.stroke();
+    });
+
+    // Nodes
+    nodes.forEach((n, idx) => {
+        const uix = U ? U[2 * idx] : 0;
+        const uiy = U ? U[2 * idx + 1] : 0;
+        const px = getX(n[0] + uix * scale);
+        const py = getY(n[1] + uiy * scale);
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI * 2); ctx.fill();
+        ctx.font = '10px monospace';
+        ctx.fillText(`${idx}`, px + 8, py - 8);
+    });
+  };
+
+  useEffect(() => {
+    const animate = () => {
+      const currentTime = (Date.now() - startTimeRef.current) / 1000;
+      renderDiagram(data, currentTime);
+      animationRef.current = requestAnimationFrame(animate);
+    };
+
+    if (type === 'vibration_response' || type === 'time_series') {
+      animationRef.current = requestAnimationFrame(animate);
+    } else {
+      renderDiagram(data);
+    }
+
+    return () => {
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+    };
+  }, [data, type]);
+
+  const renderBodePlot = (ctx, w, h, data) => {
+    const { w: omega, mag, phase } = data;
+    if (!omega || !mag || !phase) return;
+
+    const padding = 40;
+    const halfH = (h - 3 * padding) / 2;
+
+    // Magnitude Plot (Top)
+    drawBodeComponent(ctx, padding, padding, w - 2 * padding, halfH, omega, mag, '#3b82f6', 'Magnitude (dB)', true);
+    
+    // Phase Plot (Bottom)
+    drawBodeComponent(ctx, padding, 2 * padding + halfH, w - 2 * padding, halfH, omega, phase, '#f87171', 'Phase (deg)', false);
+  };
+
+  const drawBodeComponent = (ctx, x, y, width, height, xData, yData, color, label, isLogX) => {
+    const minX = Math.log10(Math.min(...xData));
+    const maxX = Math.log10(Math.max(...xData));
+    const minY = Math.min(...yData);
+    const maxY = Math.max(...yData);
+    const rangeY = maxY - minY || 1;
+
+    const scaleX = width / (maxX - minX);
+    const scaleY = height / rangeY;
+
+    // Grid details
+    ctx.strokeStyle = '#ffffff22';
+    ctx.lineWidth = 1;
+    for (let i = Math.floor(minX); i <= Math.ceil(maxX); i++) {
+        const px = x + (i - minX) * scaleX;
+        ctx.beginPath(); ctx.moveTo(px, y); ctx.lineTo(px, y + height); ctx.stroke();
+    }
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    xData.forEach((val, i) => {
+        const px = x + (Math.log10(val) - minX) * scaleX;
+        const py = y + height - (yData[i] - minY) * scaleY;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    ctx.fillStyle = color;
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText(label, x + 5, y + 15);
   };
 
   const renderMatrixDiagram = (ctx, w, h, data) => {
@@ -113,7 +243,7 @@ const StudioCanvas = ({ type, data, width = 600, height = 300 }) => {
     }
   };
 
-  const renderVibrationDiagram = (ctx, w, h, data) => {
+  const renderVibrationDiagram = (ctx, w, h, data, time = 0) => {
     if (!data.t || !data.x) return;
 
     const padding = 40;
@@ -129,25 +259,38 @@ const StudioCanvas = ({ type, data, width = 600, height = 300 }) => {
     const scaleY = plotH / (maxX - minX || 1);
 
     // Draw axes
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#ffffff44';
+    ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(padding, padding);
     ctx.lineTo(padding, h - padding);
     ctx.lineTo(w - padding, h - padding);
     ctx.stroke();
 
-    // Draw waveform
+    // Draw waveform up to current time (looping)
+    const animTime = (time % (maxT * 2)) / 2; // slow loop
+    const limitT = Math.min(animTime, maxT);
+
     ctx.strokeStyle = '#60a5fa';
     ctx.lineWidth = 2;
     ctx.beginPath();
+    let lastPoint = null;
     data.t.forEach((t, i) => {
+      if (t > limitT && type !== 'force_diagram') return; 
       const x = padding + (t - minT) * scaleX;
       const y = h - padding - (data.x[i] - minX) * scaleY;
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
+      lastPoint = { x, y };
     });
     ctx.stroke();
+
+    if (lastPoint) {
+      ctx.fillStyle = '#60a5fa';
+      ctx.beginPath();
+      ctx.arc(lastPoint.x, lastPoint.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // Labels
     ctx.fillStyle = '#ffffff';
@@ -539,21 +682,38 @@ const StudioCanvas = ({ type, data, width = 600, height = 300 }) => {
     );
   }
 
-  if (type === 'matrix') {
+  if (type === 'matrix' || type === 'force_diagram' || type === 'vibration_response' || type === 'time_series' || type === 'trajectory' || type === 'circuit_ohms' || type === 'resistor_network' || type === 'beam_analysis' || type === 'bode_plot' || type === 'truss_fem') {
     return (
       <div className="space-y-3">
         <div className="bg-[#0b0b0b] p-4 border border-white/10 rounded-[24px] overflow-hidden shadow-2xl relative group">
-          <canvas
-            ref={canvasRef}
-            width={width}
-            height={height}
-            className="w-full h-auto"
-            id={`canvas-${type}`}
-          />
+          <TransformWrapper
+            initialScale={1}
+            centerOnInit
+          >
+            {({ zoomIn, zoomOut, resetTransform }) => (
+              <>
+                <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                  <button onClick={() => zoomIn()} className="p-1.5 bg-white/10 rounded-lg hover:bg-white hover:text-black transition-all">
+                    <Maximize2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => resetTransform()} className="p-1.5 bg-white/10 rounded-lg hover:bg-white hover:text-black transition-all">
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <TransformComponent wrapperClass="!w-full !h-auto">
+                  <canvas
+                    ref={canvasRef}
+                    width={width}
+                    height={height}
+                    className="w-full h-auto cursor-grab active:cursor-grabbing"
+                    id={`canvas-${type}`}
+                  />
+                </TransformComponent>
+              </>
+            )}
+          </TransformWrapper>
         </div>
-        {data?.caption && (
-          <p className="text-xs text-white/50 leading-6">{data.caption}</p>
-        )}
+        {data?.caption && <p className="text-[10px] uppercase tracking-widest text-white/40 px-2 font-mono">{data.caption}</p>}
       </div>
     );
   }

@@ -49,13 +49,28 @@ async def solve_optics(params):
     # Snell's Law: n1*sin(theta1) = n2*sin(theta2)
     sin_theta2 = (n1 * np.sin(np.radians(theta1))) / n2
     
-    steps = ["### Optics Analysis (Snell's Law)"]
+    # Uncertainty Analysis
+    uncertainties = {k.replace("_sigma", ""): v for k, v in params.items() if k.endswith("_sigma")}
+    theta2_sigma = 0
+    theta2 = 0
     if abs(sin_theta2) <= 1:
         theta2 = np.degrees(np.arcsin(sin_theta2))
+        if uncertainties:
+            from solvers.utils import propagate_uncertainty
+            expr = "asin((n1 * sin(theta1 * pi / 180)) / n2) * 180 / pi"
+            p_eval = {"n1": n1, "theta1": theta1, "n2": n2, "pi": np.pi}
+            theta2_sigma = propagate_uncertainty(expr, p_eval, uncertainties)
+
+    steps = ["### Optics Analysis (Snell's Law)"]
+    if abs(sin_theta2) <= 1:
         steps.append(f"- Medium 1 ($n_1$): {n1}")
         steps.append(f"- Incidence Angle ($\\theta_1$): {theta1}$^\\circ$")
         steps.append(f"- Medium 2 ($n_2$): {n2}")
-        steps.append(f"**Refraction Angle ($\\theta_2$):** {theta2:.2f}$^\\circ$")
+        steps.append(f"**Refraction Angle ($\\theta_2$):** {theta2:.3f}$^\\circ$")
+        
+        if theta2_sigma > 0:
+            from solvers.utils import append_uncertainty_to_final
+            steps = append_uncertainty_to_final(steps, "Refraction Angle", theta2, theta2_sigma, "deg")
     else:
         steps.append("Total Internal Reflection occurs.")
         

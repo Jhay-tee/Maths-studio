@@ -10,7 +10,7 @@ def series_points(x_values, y_values):
 
 
 async def solve_thermo(data):
-    yield {"type": "step", "content": "Initializing Thermodynamics Engine..."}
+    yield {"type": "step", "content": "Initializing Advanced Thermal Science Kernel..."}
 
     params = normalize_params(data.get("parameters", {}))
     
@@ -26,34 +26,103 @@ async def solve_thermo(data):
     # Display variables used
     used_vars = [k for k in params.keys() if params[k] is not None]
     if used_vars:
-        yield {"type": "step", "content": f"State variables detected: {', '.join(used_vars)}"}
+        yield {"type": "step", "content": f"Thermal parameters identified: {', '.join(used_vars)}"}
 
     try:
         if any(keyword in pt or keyword in raw for keyword in ["ideal gas", "gas", "pv=nrt"]):
             async for chunk in solve_ideal_gas(params):
                 yield chunk
+        elif any(keyword in pt or keyword in raw for keyword in ["radiation", "stefan", "boltzmann", "emissivity"]):
+            async for chunk in solve_radiation(params):
+                yield chunk
+        elif any(keyword in pt or keyword in raw for keyword in ["convection", "film", "h_coeff"]):
+            async for chunk in solve_convection(params):
+                yield chunk
+        elif any(keyword in pt or keyword in raw for keyword in ["conduction", "wall", "heat flux", "conductivity"]):
+            async for chunk in solve_conduction(params):
+                yield chunk
         elif any(keyword in pt or keyword in raw for keyword in ["heat", "specific", "calorimetry"]):
-            async for chunk in solve_heat_transfer(params):
+            async for chunk in solve_heat_transfer_basic(params):
                 yield chunk
         elif any(keyword in pt or keyword in raw for keyword in ["entropy", "reversible", "isentropic"]):
             async for chunk in solve_entropy(params):
                 yield chunk
-        elif any(keyword in pt or keyword in raw for keyword in ["cycle", "carnot", "otto", "rankine", "refrigerator"]):
+        elif any(keyword in pt or keyword in raw for keyword in [" cycle", "carnot", "otto", "rankine", "refrigerator"]):
             async for chunk in solve_cycles(params):
-                yield chunk
-        elif any(keyword in pt or keyword in raw for keyword in ["conduction", "wall", "heat flux"]):
-            async for chunk in solve_conduction(params):
                 yield chunk
         elif any(keyword in pt or keyword in raw for keyword in ["polytropic", "compression", "expansion"]):
             async for chunk in solve_polytropic(params):
                 yield chunk
         else:
-            yield {"type": "final", "answer": "Thermodynamic problem detected, but I need a clearer type such as ideal gas, heat transfer, entropy, cycle, conduction, or polytropic process."}
+            yield {"type": "final", "answer": "I can solve problems involving Ideal Gases, Conductive/Convective/Radiative Heat Transfer, Thermal Cycles, and Entropy. Please specify the process details."}
     except Exception as e:
         yield {"type": "final", "answer": f"Thermo Solver Error: {str(e)}"}
 
+async def solve_radiation(params):
+    yield {"type": "step", "content": "Applying Stefan-Boltzmann Law for radiative heat transfer..."}
+    sigma = 5.670373e-8
+    eps = float(params.get("eps", params.get("emissivity", 1.0)))
+    A = float(params.get("A", params.get("area", 1.0)))
+    T1 = float(params.get("T1", params.get("t1", 300)))
+    T2 = float(params.get("T2", params.get("t2", 0))) # Background
+    
+    Q = sigma * eps * A * (T1**4 - T2**4)
+    flux = Q / A if A else 0
+    
+    ans = [
+        "### Radiative Heat Transfer Analysis",
+        f"- **Stefan-Boltzmann Constant ($\\sigma$):** $5.67 \\times 10^{{-8}}$ W/m²·K⁴",
+        f"- **Emissivity ($\\epsilon$):** {eps}",
+        f"- **Surface Temperature:** {T1} K",
+        f"- **Background Temperature:** {T2} K",
+        f"- **Net Heat Transfer Rate ($Q$):** {Q:.2f} W",
+        f"- **Radiative Heat Flux ($q''$):** {flux:.2f} W/m²"
+    ]
+    yield {"type": "final", "answer": "\n".join(ans)}
 
-async def solve_ideal_gas(params):
+async def solve_convection(params):
+    yield {"type": "step", "content": "Calculating convective heat loss using Newton's law of cooling..."}
+    h = float(params.get("h", params.get("h_coeff", 10)))
+    A = float(params.get("A", params.get("area", 1.0)))
+    Ts = float(params.get("Ts", params.get("t_surface", 350)))
+    Tinf = float(params.get("Tinf", params.get("t_fluid", 298)))
+    
+    Q = h * A * (Ts - Tinf)
+    flux = Q / A if A else h * (Ts - Tinf)
+    
+    ans = [
+        "### Convective Heat Transfer Analysis",
+        f"- **Convection Coefficient ($h$):** {h} W/m²·K",
+        f"- **Surface Area ($A$):** {A} m²",
+        f"- **$\Delta T$ (Surface - Fluid):** {Ts - Tinf} K",
+        f"- **Total Heat Rate ($Q$):** {Q:.2f} W",
+        f"- **Convective Heat Flux ($q''$):** {flux:.2f} W/m²"
+    ]
+    yield {"type": "final", "answer": "\n".join(ans)}
+
+async def solve_conduction(params):
+    yield {"type": "step", "content": "Applying Fourier's Law for steady-state conduction..."}
+    k = float(params.get("k", params.get("conductivity", 0.5)))
+    L = float(params.get("L", params.get("thickness", 0.05)))
+    A = float(params.get("A", params.get("area", 1.0)))
+    T1 = float(params.get("T1", 373))
+    T2 = float(params.get("T2", 298))
+    
+    R_thermal = L / (k * A) if (k * A) else 0
+    Q = (T1 - T2) / R_thermal if R_thermal else 0
+    flux = Q / A if A else (k * (T1-T2) / L)
+    
+    ans = [
+        "### Conductive Heat Transfer Analysis",
+        f"- **Thermal Conductivity ($k$):** {k} W/m·K",
+        f"- **Wall Thickness ($L$):** {L} m",
+        f"- **Thermal Resistance ($R_t$):** {R_thermal:.4e} K/W",
+        f"- **Conduction Heat Rate ($Q$):** {Q:.2f} W",
+        f"- **Heat Flux ($q''$):** {flux:.2f} W/m²"
+    ]
+    yield {"type": "final", "answer": "\n".join(ans)}
+
+async def solve_heat_transfer_basic(params):
     yield {"type": "step", "content": "Applying the ideal gas equation of state..."}
     p = params.get("p")
     v = params.get("v", params.get("V"))
@@ -94,14 +163,14 @@ async def solve_ideal_gas(params):
     yield {"type": "final", "answer": "\n".join(steps)}
 
 
-async def solve_heat_transfer(params):
-    yield {"type": "step", "content": "Calculating sensible heat transfer..."}
-    m = float(params.get("m", 1))
-    c = float(params.get("c", 4186))
+async def solve_heat_transfer_basic(params):
+    yield {"type": "step", "content": "Calculating sensible heat transfer (Calorimetry)..."}
+    m = float(params.get("m", params.get("mass", 1)))
+    c = float(params.get("c", params.get("sp_heat", 4186)))
     dt = float(params.get("dt", params.get("delta_t", 10)))
     q = m * c * dt
 
-    yield {"type": "final", "answer": f"### Calorimetry Report\n- Mass: {m:.4f} kg\n- Specific heat: {c:.4f} J/(kg·K)\n- Temperature change: {dt:.4f} K\n- Heat transferred: {q:.4f} J"}
+    yield {"type": "final", "answer": f"### Calorimetry Report\n- **Mass:** {m:.4f} kg\n- **Specific heat:** {c:.4f} J/(kg·K)\n- **Temperature change:** {dt:.4f} K\n- **Heat energy ($Q$):** {q:.4f} J"}
 
 
 async def solve_entropy(params):
@@ -150,22 +219,6 @@ async def solve_cycles(params):
         f"- Carnot refrigerator COP: {cop:.6f}",
     ]
     yield {"type": "final", "answer": "\n".join(steps)}
-
-
-async def solve_conduction(params):
-    yield {"type": "step", "content": "Applying one-dimensional steady conduction through a wall..."}
-    k = float(params.get("k", 45))
-    A = float(params.get("A", params.get("area", 1)))
-    L = float(params.get("L", params.get("thickness", 0.1)))
-    t1 = float(params.get("t1", 400))
-    t2 = float(params.get("t2", 300))
-
-    q = k * A * (t1 - t2) / L if L else 0.0
-    x = np.linspace(0, L, 50)
-    temp = t1 + (t2 - t1) * (x / L) if L else np.full_like(x, t1)
-    yield {"type": "diagram", "diagram_type": "temperature_curve", "data": series_points(x, temp)}
-
-    yield {"type": "final", "answer": f"### Wall Conduction Analysis\n- Thermal conductivity: {k:.4f} W/(m·K)\n- Area: {A:.4f} m^2\n- Thickness: {L:.4f} m\n- Heat transfer rate: {q:.4f} W"}
 
 
 async def solve_polytropic(params):

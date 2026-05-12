@@ -71,7 +71,7 @@ async def solve_calculus(data):
             grad_latex = "\\begin{bmatrix} " + " \\\\ ".join([sp.latex(g) for g in grad]) + " \\end{bmatrix}"
             steps.extend([
                 f"**Operation:** Gradient Vector Field",
-                f"**Scalar Function:** $f({', '.join(vars_to_use)}) = {sp.latex(expr)}$",
+                f"**Scalar Function:** $f({', '.join(vars_detected)}) = {sp.latex(expr)}$",
                 f"**Result:** $\\nabla f = {grad_latex}$"
             ])
 

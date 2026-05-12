@@ -409,6 +409,96 @@ def resolve_numeric_expressions(params):
     return resolved
 
 
+def propagate_uncertainty(expr, params, uncertainties):
+    """
+    Performs first-order uncertainty propagation using SymPy.
+    expr: sympy expression or string
+    params: dict of parameter values {name: value}
+    uncertainties: dict of absolute uncertainties {name: sigma}
+    """
+    if not uncertainties:
+        return 0.0
+    
+    expr_sym = safe_sympify(expr)
+    if isinstance(expr_sym, str): return 0.0
+    
+    symbols = {s.name: s for s in expr_sym.free_symbols}
+    variance = 0.0
+    
+    for var_name, sigma in uncertainties.items():
+        if var_name in symbols:
+            s_var = symbols[var_name]
+            diff_f = sp.diff(expr_sym, s_var)
+            # Evaluate derivative at nominal values
+            try:
+                deriv_val = float(diff_f.subs(params))
+                variance += (deriv_val * float(sigma))**2
+            except Exception:
+                continue
+                
+    return float(sp.sqrt(variance))
+
+def detect_matrix(s):
+    """
+    Heuristic to detect if a string represents a matrix.
+    e.g. [[1,2],[3,4]] or [1 2; 3 4]
+    """
+    if not isinstance(s, str): return False
+    s = s.strip()
+    if s.startswith("[") and s.endswith("]"):
+        return True
+    if ";" in s and re.search(r"\d", s):
+        return True
+    return False
+
+def parse_matrix(s):
+    """
+    Parses a string into a SymPy Matrix.
+    """
+    try:
+        # Standardize format: replace ; with newline or comma nests
+        clean = s.strip()
+        if ";" in clean and not clean.startswith("[["):
+            # Format: [1 2; 3 4] -> [[1,2],[3,4]]
+            rows = clean.strip("[]").split(";")
+            nested = []
+            for r in rows:
+                nested.append([float(x) for x in re.findall(r"[-+]?\d*\.\d+|\d+", r)])
+            return sp.Matrix(nested)
+        
+        # Try to eval as literal first if it looks like python list
+        if clean.startswith("[["):
+            import ast
+            return sp.Matrix(ast.literal_eval(clean))
+            
+        return sp.Matrix(sp.sympify(clean))
+    except Exception:
+        return None
+
+def format_uncertainty_report(result_val, uncertainty, unit=""):
+    """
+    Returns a formatted markdown string for uncertainty.
+    """
+    if uncertainty <= 0:
+        return f"{result_val:.4f} {unit}"
+    
+    # Calculate relative error
+    rel_error = (uncertainty / abs(result_val) * 100) if result_val != 0 else 0
+    
+    return f"{result_val:.4f} ± {uncertainty:.4f} {unit} ({rel_error:.2f}%)"
+
+def append_uncertainty_to_final(steps, result_name, nominal_val, sigma, unit=""):
+    """
+    Appends a structured uncertainty block to the solution steps.
+    """
+    steps.append("\n#### Uncertainty Analysis")
+    steps.append(f"- **Nominal {result_name}:** {nominal_val:.6f} {unit}")
+    steps.append(f"- **Absolute Uncertainty ($\sigma$):** {sigma:.6f} {unit}")
+    if nominal_val != 0:
+        steps.append(f"- **Relative Error:** {(sigma/abs(nominal_val)*100):.3f}%")
+    steps.append(f"- **Final Result:** ${nominal_val:.4f} \pm {sigma:.4f}$ {unit}")
+    return steps
+
 def polish_final_answer(answer, domain="", problem_type=""):
     text = (answer or "").strip()
     if not text:

@@ -68,14 +68,14 @@ export default function MessageBubble({ msg, onDelete }) {
         className={`w-full max-w-[98%] md:max-w-[92%] transition-all duration-300 ${showOptions ? 'scale-[0.98] opacity-50 blur-[2px]' : ''}`}
       >
         {!isAssistant ? (
-          <div className="space-y-2">
+          <div className="flex flex-col items-end gap-2 max-w-[85%]">
             {msg.image && (
               <div className="rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
                 <img src={`data:image/jpeg;base64,${msg.image}`} alt="User input" className="w-full h-auto max-h-[300px] object-contain bg-black/40" />
               </div>
             )}
             {msg.content && (
-              <div className="bg-white text-black p-5 rounded-[1.4rem] rounded-tr-md shadow-xl font-medium text-sm leading-7">
+              <div className="bg-[#1a1a1a] border border-white/5 text-white/90 px-5 py-3 rounded-2xl shadow-sm font-medium text-sm leading-relaxed">
                 {msg.content}
               </div>
             )}

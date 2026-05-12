@@ -354,8 +354,8 @@ export default function App() {
           )}
         </div>
 
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-[#0b0b0b] via-[#0b0b0b] to-transparent pt-20 pb-6 px-4 md:px-8 pointer-events-none">
-          <div className="max-w-4xl mx-auto w-full pointer-events-auto">
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-[#0b0b0b] via-[#0b0b0b] to-transparent pt-12 pb-6 px-4 md:px-8 pointer-events-none">
+          <div className="max-w-4xl mx-auto w-full pointer-events-auto bg-[#1a1a1a]/80 backdrop-blur-xl border border-white/10 rounded-2xl p-2 shadow-2xl">
             <ChatInput 
               inputText={inputText}
               setInputText={setInputText}
@@ -370,11 +370,6 @@ export default function App() {
               fileInputRef={fileInputRef}
               onStop={stopProcessing}
             />
-            <div className="mt-4 text-center">
-               <p className="text-[10px] font-mono opacity-20 uppercase tracking-tighter">
-                 Precision Engineering Computing &bull; Results are NOT AI-generated
-               </p>
-            </div>
           </div>
         </div>
       </main>

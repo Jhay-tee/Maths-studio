@@ -104,45 +104,36 @@ async def solve_continuity(params):
     yield {"type": "final", "answer": "\n".join(steps)}
 
 
-async def solve_flow_meter(params):
-    yield {"type": "step", "content": "Evaluating venturi/orifice meter performance..."}
-    rho = float(params.get("rho", WATER_DENSITY))
-    d1 = float(params.get("d1", 0.1))
-    d2 = float(params.get("d2", 0.05))
-    dp = float(params.get("dp", params.get("delta_p", 1000)))
-    cd = float(params.get("cd", 0.98))
-
-    a1 = np.pi * (d1 / 2) ** 2
-    a2 = np.pi * (d2 / 2) ** 2
-    beta = d2 / d1
-    q = cd * a2 * np.sqrt((2 * dp) / (rho * (1 - beta ** 4)))
-    v2 = q / a2
-
-    x = np.array([d1, d2])
-    y = np.array([q / a1, v2])
-    yield {"type": "diagram", "diagram_type": "pressure_curve", "data": series_points(x, y)}
-
-    yield {"type": "final", "answer": f"### Flow Meter Analysis\n- Inlet diameter: {d1:.4f} m\n- Throat diameter: {d2:.4f} m\n- Pressure drop: {dp:.2f} Pa\n- Discharge coefficient: {cd:.3f}\n- Flow rate: {q:.6f} m^3/s\n- Throat velocity: {v2:.4f} m/s"}
-
-
 async def solve_hydrostatics(params, raw_query=""):
     yield {"type": "step", "content": "Computing hydrostatic pressure variation with depth..."}
     h = float(params.get("h", params.get("depth", 1)))
     rho = float(params.get("rho", WATER_DENSITY))
-    g = float(params.get("g", G))
+    g = 9.81
 
     p_gauge = rho * g * h
+    
+    # Uncertainty Analysis
+    uncertainties = {k.replace("_sigma", ""): v for k, v in params.items() if k.endswith("_sigma")}
+    p_sigma = 0
+    if uncertainties:
+        from solvers.utils import propagate_uncertainty
+        expr = "rho * g * h"
+        p_eval = {"rho": rho, "g": g, "h": h}
+        p_sigma = propagate_uncertainty(expr, p_eval, uncertainties)
+
     depths = np.linspace(0, max(h, 1e-6), 60)
     pressures = rho * g * depths / 1000
     yield {"type": "diagram", "diagram_type": "pressure_curve", "data": series_points(depths, pressures)}
 
     steps = [
         "### Hydrostatic Analysis",
-        f"- Depth: {h:.4f} m",
-        f"- Density: {rho:.2f} kg/m^3",
-        f"- Gauge pressure: {p_gauge:.2f} Pa",
-        f"- Gauge pressure: {p_gauge / 1000:.4f} kPa",
+        f"- **Depth ($h$):** {h:.4f} m",
+        f"- **Density ($\\rho$):** {rho:.2f} kg/m³",
+        f"- **Gauge pressure:** {p_gauge:.2f} Pa ({p_gauge / 1000:.4f} kPa)",
     ]
+    if p_sigma > 0:
+        from solvers.utils import append_uncertainty_to_final
+        steps = append_uncertainty_to_final(steps, "Gauge Pressure", p_gauge, p_sigma, "Pa")
     if raw_query:
         if "add more water" in raw_query:
             steps.append("- Adding more water increases the pressure because pressure grows with liquid height.")
@@ -150,10 +141,7 @@ async def solve_hydrostatics(params, raw_query=""):
             steps.append("- For the same height, vegetable oil gives a lower pressure because its density is lower than water.")
         if "bubble" in raw_query:
             steps.append("- The air bubble expands as it rises because the surrounding pressure decreases toward the surface.")
-        if "hole at the bottom" in raw_query:
-            steps.append("- Water flows out fastest at first because the pressure head is largest, then slows down as the water level drops.")
     yield {"type": "final", "answer": "\n".join(steps)}
-
 
 async def solve_bernoulli(params):
     yield {"type": "step", "content": "Applying Bernoulli head balance between two sections..."}
@@ -164,79 +152,103 @@ async def solve_bernoulli(params):
     p2 = params.get("p2")
     v2 = params.get("v2")
     h2 = float(params.get("h2", 0))
-    g = float(params.get("g", G))
+    g = 9.81
 
     p2 = None if p2 in (None, "") else float(p2)
     v2 = None if v2 in (None, "") else float(v2)
 
     total_head_1 = p1 / (rho * g) + (v1 ** 2) / (2 * g) + h1
+    
     if p2 is None and v2 is not None:
         p2 = rho * g * (total_head_1 - (v2 ** 2) / (2 * g) - h2)
     elif v2 is None and p2 is not None:
         v2_head = max(0.0, 2 * g * (total_head_1 - p2 / (rho * g) - h2))
         v2 = np.sqrt(v2_head)
-    elif p2 is None and v2 is None:
-        yield {"type": "final", "answer": "Provide either the downstream pressure or downstream velocity for Bernoulli analysis."}
-        return
-
-    heads_x = np.array([1, 2, 3])
-    heads_y = np.array([
-        p1 / (rho * g),
-        (v1 ** 2) / (2 * g),
-        h1,
-    ])
-    yield {"type": "diagram", "diagram_type": "energy_curve", "data": series_points(heads_x, heads_y)}
-
-    steps = [
-        "### Bernoulli Resolution",
-        f"- Upstream total head: {total_head_1:.4f} m",
-        f"- Downstream velocity: {v2:.4f} m/s",
-        f"- Downstream pressure: {p2:.2f} Pa",
-        f"- Downstream pressure: {p2 / 1000:.4f} kPa",
+    
+    ans = [
+        "### Bernoulli Energy Analysis",
+        f"- **Section 1 Total Head:** {total_head_1:.4f} m",
+        f"- **Section 2 Pressure:** {p2:.2f} Pa" if p2 else "",
+        f"- **Section 2 Velocity:** {v2:.4f} m/s" if v2 else "",
+        "- **Note:** Ideal flow assumed (Energy Grade Line = Hydraulic Grade Line)."
     ]
-    yield {"type": "final", "answer": "\n".join(steps)}
+    yield {"type": "final", "answer": "\n".join(filter(None, ans))}
+
+async def solve_flow_meter(params):
+    yield {"type": "step", "content": "Evaluating flow meter characteristics (Venturi/Orifice)..."}
+    rho = float(params.get("rho", WATER_DENSITY))
+    d1 = float(params.get("d1", 0.1))
+    d2 = float(params.get("d2", 0.05))
+    dp = float(params.get("dp", 1000))
+    Cd = float(params.get("cd", 0.98)) # Discharge coefficient
+
+    A1 = np.pi * (d1**2) / 4
+    A2 = np.pi * (d2**2) / 4
+    
+    Q = Cd * A2 * np.sqrt((2 * dp) / (rho * (1 - (A2/A1)**2)))
+    v1 = Q / A1
+    v2 = Q / A2
+
+    ans = [
+        "### Flow Meter Performance",
+        f"- **Flow Rate ($Q$):** {Q:.6f} m³/s",
+        f"- **Throat Velocity ($v_2$):** {v2:.4f} m/s",
+        f"- **Inlet Velocity ($v_1$):** {v1:.4f} m/s",
+        f"- **Area Ratio:** {(A2/A1):.3f}"
+    ]
+    yield {"type": "final", "answer": "\n".join(ans)}
 
 
 async def solve_pipe_flow(params):
-    yield {"type": "step", "content": "Evaluating Reynolds number and pipe-flow regime..."}
-    v = float(params.get("v", 1))
-    d = float(params.get("d", params.get("D", 0.1)))
+    yield {"type": "step", "content": "Determining flow regime and velocity profiles..."}
+    v = float(params.get("v", params.get("velocity", 1.0)))
+    D = float(params.get("D", params.get("d", 0.1)))
     rho = float(params.get("rho", WATER_DENSITY))
     mu = float(params.get("mu", WATER_VISCOSITY))
 
-    re = (rho * v * d) / mu if mu else 0.0
-    regime = "Laminar" if re < 2300 else "Turbulent" if re > 4000 else "Transitional"
+    Re = (rho * v * D) / mu if mu else 0
+    regime = "Laminar" if Re < 2300 else "Turbulent" if Re > 4000 else "Transitional"
+    
+    # Velocity Profile (Parabolic for laminar, power law for turbulent)
+    r = np.linspace(-D/2, D/2, 50)
+    if Re < 2300:
+        v_profile = v * 2 * (1 - (r/(D/2))**2)
+    else:
+        v_profile = v * (8/7) * (1 - np.abs(r/(D/2)))**(1/7) # 1/7th power law approx
+        
+    yield {
+        "type": "diagram",
+        "diagram_type": "velocity_profile",
+        "data": [{"r": float(ri), "v": float(vi)} for ri, vi in zip(r, v_profile)]
+    }
 
-    velocities = np.linspace(0.1, max(v * 1.5, 0.2), 60)
-    reynolds = (rho * velocities * d) / mu if mu else np.zeros_like(velocities)
-    yield {"type": "diagram", "diagram_type": "pressure_curve", "data": series_points(velocities, reynolds)}
-
-    yield {"type": "final", "answer": f"### Pipe Flow Diagnostics\n- Velocity: {v:.4f} m/s\n- Diameter: {d:.4f} m\n- Reynolds number: {re:.2f}\n- Regime: **{regime}**"}
-
+    ans = [
+        "### Pipe Flow Diagnostics",
+        f"- **Reynolds Number ($Re$):** {Re:.2f}",
+        f"- **Flow Regime:** **{regime}**",
+        "- **Profile Description:** " + ("Parabolic (Laminar)" if Re < 2300 else "Logarithmic/Power-law (Turbulent)")
+    ]
+    yield {"type": "final", "answer": "\n".join(ans)}
 
 async def solve_head_loss(params):
-    yield {"type": "step", "content": "Calculating Darcy-Weisbach head loss profile..."}
-    L = float(params.get("L", params.get("l", 100)))
-    d = float(params.get("d", params.get("D", 0.1)))
+    yield {"type": "step", "content": "Calculating energy dissipation via Darcy-Weisbach relations..."}
+    L = float(params.get("L", 100))
+    D = float(params.get("D", 0.1))
     v = float(params.get("v", 2))
-    f = float(params.get("f", 0.02))
-    g = float(params.get("g", G))
-
-    hf = f * (L / d) * (v ** 2 / (2 * g))
-    x = np.linspace(0, L, 80)
-    y = hf * (x / L) if L else np.zeros_like(x)
-    yield {"type": "diagram", "diagram_type": "pressure_curve", "data": series_points(x, y)}
-
-    steps = [
-        "### Head Loss Analysis",
-        f"- Pipe length: {L:.4f} m",
-        f"- Diameter: {d:.4f} m",
-        f"- Velocity: {v:.4f} m/s",
-        f"- Friction factor: {f:.5f}",
-        f"- Head loss: {hf:.5f} m",
-        f"- Pressure drop: {WATER_DENSITY * g * hf:.2f} Pa",
+    f = float(params.get("f", 0.02)) # Darcy friction factor
+    g = 9.81
+    
+    hf = f * (L/D) * (v**2 / (2*g))
+    dp = hf * WATER_DENSITY * g
+    
+    ans = [
+        "### Major Head Loss Report",
+        f"- **Darcy Friction Factor ($f$):** {f}",
+        f"- **Head Loss ($h_f$):** {hf:.4f} m",
+        f"- **Pressure Drop ($\\Delta P$):** {dp/1000:.2f} kPa",
+        f"- **Loss Gradient:** {hf/L:.4f} m/m"
     ]
-    yield {"type": "final", "answer": "\n".join(steps)}
+    yield {"type": "final", "answer": "\n".join(ans)}
 
 
 async def solve_pump_power(params):

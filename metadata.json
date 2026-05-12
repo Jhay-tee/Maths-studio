@@ -1,6 +1,6 @@
 {
   "name": "Maths Studio by Jhaytee",
-  "description": "Professional engineering computation studio. Supports multivariable calculus, structural FEM, fluid dynamics, algebraic systems, and data visualization.",
+  "description": "Professional engineering computation studio. Features advanced beam deflection analysis, uncertainty propagation (GUM), control systems frequency response (Bode), and 3D surface visualizations.",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": ["Math Solving", "Engineering Diagrams", "Streaming Solutions"]
 }
