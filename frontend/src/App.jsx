@@ -1,4 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
+
+const logger = {
+  error: (msg, data) => console.error(`[Error] ${msg}`, data),
+  warn: (msg, data) => console.warn(`[Warn] ${msg}`, data),
+  info: (msg, data) => console.log(`[Info] ${msg}`, data),
+};
 import { 
   History, 
   Trash2
@@ -158,6 +164,7 @@ export default function App() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let receivedFinal = false;
 
       while (true) {
         const { value, done } = await reader.read();

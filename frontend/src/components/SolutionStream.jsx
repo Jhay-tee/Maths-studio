@@ -57,7 +57,7 @@ export default function SolutionStream({ steps, final, error, isStreaming }) {
   if (!hasContent) return null;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* ── Computational Sequence ── */}
       <AnimatePresence mode="popLayout">
         {visibleSteps.map((step, i) => {
