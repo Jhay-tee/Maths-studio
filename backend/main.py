@@ -40,11 +40,16 @@ request_windows_lock = asyncio.Lock()
 async def health():
     return {"status": "ok", "uptime": "running"}
 
+@app.options("/api/compute/solve")
+async def options_solve():
+    return {}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=False,
 )
 
 
@@ -586,7 +591,11 @@ async def solve(request: Request):
     except Exception:
         async def _bad():
             yield make_error_event("Invalid JSON in request body")
-        return StreamingResponse(_bad(), media_type="text/event-stream")
+        response = StreamingResponse(_bad(), media_type="text/event-stream")
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return response
 
     user_input = raw_data.get("input", "").strip()
     input_type = raw_data.get("type", "text")
@@ -596,7 +605,11 @@ async def solve(request: Request):
     if not user_input and not is_image:
         async def _missing():
             yield make_error_event("No input provided")
-        return StreamingResponse(_missing(), media_type="text/event-stream")
+        response = StreamingResponse(_missing(), media_type="text/event-stream")
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return response
 
     try:
         await asyncio.wait_for(solve_semaphore.acquire(), timeout=2.0)
@@ -604,7 +617,11 @@ async def solve(request: Request):
     except asyncio.TimeoutError:
         async def _busy():
             yield make_error_event("Studio kernel is busy. Please retry in a few seconds.")
-        return StreamingResponse(_busy(), media_type="text/event-stream")
+        response = StreamingResponse(_busy(), media_type="text/event-stream")
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return response
 
     async def event_generator():
         try:
@@ -766,7 +783,13 @@ async def solve(request: Request):
             if acquired_slot:
                 solve_semaphore.release()
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    response = StreamingResponse(event_generator(), media_type="text/event-stream")
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Connection"] = "keep-alive"
+    return response
 
 
 # Serves the frontend if built
