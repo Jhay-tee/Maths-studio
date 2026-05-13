@@ -185,32 +185,35 @@ export default function App() {
               return;
             }
             
+            // Side effects for parameter collection must NOT be inside setMessages updater.
+            if (data.type === 'needs_parameters') {
+              setPendingCompute({ payload, assistantMessage, saveContext });
+              setMissingParams(data.missing_params || []);
+              setParameterPrompt(data.problem_description || saveContext.currentInput);
+              setShowParamDialog(true);
+            }
+
+            const MAX_STEPS = 220; // prevents unbounded memory growth on long streams
             setMessages(prev => prev.map(msg => {
               if (msg.id !== assistantMessage.id) return msg;
 
               if (data.type === 'step') {
-                return { ...msg, steps: [...msg.steps, data.content] };
+                const nextSteps = [...(msg.steps || []), data.content];
+                return { ...msg, steps: nextSteps.length > MAX_STEPS ? nextSteps.slice(nextSteps.length - MAX_STEPS) : nextSteps };
               } else if (data.type === 'table') {
                 return { ...msg, tables: [...(msg.tables || []), data] };
               } else if (data.type === 'units') {
-                return { ...msg, units: [...msg.units, ...data.data] };
+                return { ...msg, units: [...msg.units, ...(data.data || [])] };
               } else if (data.type === 'final') {
                 return { ...msg, final: (msg.final ? msg.final + '\n\n' : '') + data.answer };
               } else if (data.type === 'diagram') {
                 return { ...msg, diagrams: [...msg.diagrams, data] };
               } else if (data.type === 'needs_parameters') {
-                setPendingCompute({ payload, assistantMessage, saveContext });
-                setMissingParams(data.missing_params || []);
-                setParameterPrompt(data.problem_description || saveContext.currentInput);
-                setShowParamDialog(true);
-
-                // Do NOT abort the stream here; aborting often triggers "Connection interrupted"
-                // before the backend has finished sending the needs_parameters response.
                 return {
                   ...msg,
                   isProcessing: false,
                   steps: [
-                    ...msg.steps,
+                    ...(msg.steps || []),
                     data.message || 'Parameter is not specified.',
                   ],
                 };

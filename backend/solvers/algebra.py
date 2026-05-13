@@ -227,13 +227,14 @@ async def solve_algebra(data):
                         steps.append(f"2. **Calculate Discriminant:** $D = b^2 - 4ac = {discriminant}$")
                         roots = sp.solve(expr_to_factor, target_var)
                         if roots:
-                            steps.append(f"3. **Extraction:** Roots identified at $\{', '.join([sp.latex(r) for r in roots])\}$")
+                            roots_latex = ", ".join([sp.latex(r) for r in roots])
+                            steps.append(f"3. **Extraction:** Roots identified at $\\{{{roots_latex}\\}}$")
                             factored_str = f"{sp.latex(a)}" if a != 1 else ""
                             for r in roots:
                                 factored_str += f"({sp.latex(target_var)} - ({sp.latex(r)}))"
                             steps.append(f"4. **Reconstruction:** $${factored_str}$$")
                         else:
-                            steps.append("3. **Insight:** No real roots available for factorization over $\mathbb{R}$.")
+                            steps.append(r"3. **Insight:** No real roots available for factorization over $\mathbb{R}$.")
                     else:
                         steps.append("Expression degree is not quadratic; falling back to symbolic factoring.")
                         steps.append(f"Result: $${sp.latex(sp.factor(expr_to_factor))}$$")

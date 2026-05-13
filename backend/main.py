@@ -362,21 +362,50 @@ def build_fallback_route(user_input: str) -> dict | None:
             "sub_problems": sub_problems,
         }
 
+    # Only fallback to algebra when the text really looks like an equation/system.
+    # This prevents vague inputs from being misrouted just because they include '='.
     if "=" in text and not any(keyword in lowered for keyword in ["plot", "graph"]):
-        return {
-            "summary": "Algebra equation solving request",
-            "_model": "rule-based-route",
-            "sub_problems": [
-                {
-                    "id": "p1",
-                    "domain": "algebra",
-                    "problem_type": "equation_solving",
-                    "input_summary": text,
-                    "parameters": {"expression": text},
-                    "confidence": 1.0,
-                }
-            ],
-        }
+        # "equation-likeness": at least one '=' with a left-side variable/expression
+        equation_like = bool(re.search(r"[A-Za-z_]\w*\s*[\+\-\*\/\^\(\)\w\s]*=\s*.+", text))
+        # "system-likeness": multiple '=' or explicit "and" chaining another equation
+        system_like = (
+            text.count("=") > 1
+            or (
+                " and " in lowered
+                and bool(re.search(r"[A-Za-z_]\w*\s*[\+\-\*\/\^\(\)\w\s]*=\s*.+", text))
+            )
+        )
+        if equation_like and system_like:
+            return {
+                "summary": "Algebra simultaneous equation solving request",
+                "_model": "rule-based-route",
+                "sub_problems": [
+                    {
+                        "id": "p1",
+                        "domain": "algebra",
+                        "problem_type": "equation_solving",
+                        "input_summary": text,
+                        "parameters": {"expression": text},
+                        "confidence": 0.95,
+                    }
+                ],
+            }
+        elif equation_like:
+            # Single equation fallback (less aggressive than "any '='")
+            return {
+                "summary": "Algebra equation solving request",
+                "_model": "rule-based-route",
+                "sub_problems": [
+                    {
+                        "id": "p1",
+                        "domain": "algebra",
+                        "problem_type": "equation_solving",
+                        "input_summary": text,
+                        "parameters": {"expression": text},
+                        "confidence": 0.85,
+                    }
+                ],
+            }
 
     if "deflection values" in lowered and "plot" in lowered:
         return {
