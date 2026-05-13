@@ -219,7 +219,8 @@ async def solve_function_plot(sub):
         plt.savefig(buf_png, format='png', transparent=True, dpi=150)
         buf_png.seek(0)
         png_b64 = base64.b64encode(buf_png.read()).decode('utf-8')
-        plt.close()
+        buf_png.close()
+        plt.close('all')
         
         yield {
             "type": "diagram",
@@ -394,12 +395,14 @@ async def solve_data_viz(sub: dict):
         plt.savefig(buf_png, format='png', transparent=True, dpi=150)
         buf_png.seek(0)
         png_b64 = base64.b64encode(buf_png.read()).decode('utf-8')
-        
+        buf_png.close()
+
         buf_svg = io.BytesIO()
         plt.savefig(buf_svg, format='svg', transparent=True)
         buf_svg.seek(0)
         svg_b64 = base64.b64encode(buf_svg.read()).decode('utf-8')
-        plt.close()
+        buf_svg.close()
+        plt.close('all')
         
         csv_data = df.to_csv(index=False)
         

@@ -31,8 +31,11 @@ router.post('/', async (req, res) => {
             }
         }
 
-        // Pipe the streaming response from Python to the client
-        response.body.pipe(res);
+        // Stream the response properly using async iterator
+        for await (const chunk of response.body) {
+            res.write(chunk);
+        }
+        res.end();
 
     } catch (error) {
         console.error('Proxy Error:', error);

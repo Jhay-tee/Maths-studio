@@ -40,11 +40,16 @@ request_windows_lock = asyncio.Lock()
 async def health():
     return {"status": "ok", "uptime": "running"}
 
+@app.options("/api/compute/solve")
+async def options_solve():
+    return {}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=False,
 )
 
 
@@ -580,13 +585,18 @@ async def health():
 
 @app.post("/api/compute/solve")
 async def solve(request: Request):
-    acquired_slot = False
+    logger.info("New solve request received")
     try:
         raw_data = await request.json()
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to parse JSON: {e}")
         async def _bad():
             yield make_error_event("Invalid JSON in request body")
-        return StreamingResponse(_bad(), media_type="text/event-stream")
+        response = StreamingResponse(_bad(), media_type="text/event-stream")
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return response
 
     user_input = raw_data.get("input", "").strip()
     input_type = raw_data.get("type", "text")
@@ -594,26 +604,30 @@ async def solve(request: Request):
     is_image = input_type == "image"
 
     if not user_input and not is_image:
+        logger.warning("No input provided")
         async def _missing():
             yield make_error_event("No input provided")
-        return StreamingResponse(_missing(), media_type="text/event-stream")
-
-    try:
-        await asyncio.wait_for(solve_semaphore.acquire(), timeout=2.0)
-        acquired_slot = True
-    except asyncio.TimeoutError:
-        async def _busy():
-            yield make_error_event("Studio kernel is busy. Please retry in a few seconds.")
-        return StreamingResponse(_busy(), media_type="text/event-stream")
+        response = StreamingResponse(_missing(), media_type="text/event-stream")
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return response
 
     async def event_generator():
+        acquired_slot = False
         try:
-            # ── Step 1: Route via Gemini (classify only) ──
+            try:
+                logger.info(f"Acquiring semaphore (current: {MAX_CONCURRENT_SOLVES - solve_semaphore._value})")
+                await asyncio.wait_for(solve_semaphore.acquire(), timeout=2.0)
+                acquired_slot = True
+                logger.info(f"Semaphore acquired")
+            except asyncio.TimeoutError:
+                logger.warning(f"Semaphore timeout - kernel busy")
+                yield make_error_event("Studio kernel is busy. Please retry in a few seconds.")
+                return
+
+            # ── Route input ──
             if input_type == "data":
-                yield make_event({
-                    "type": "step",
-                    "content": "Studio Kernel: Loading dataset and preparing visualization pipeline...",
-                })
                 routing = {
                     "summary": "Dataset visualization request",
                     "_model": "direct-data-route",
@@ -631,20 +645,19 @@ async def solve(request: Request):
                     ],
                 }
             else:
-                yield make_event({
-                    "type": "step",
-                    "content": "Studio Kernel: Classifying and extracting parameters...",
-                })
-
-                routing = await route_input(user_input, is_image, history)
-                routing = sanitize_routing_result(routing, user_input, input_type)
+                try:
+                    routing = await route_input(user_input, is_image, history)
+                    routing = sanitize_routing_result(routing, user_input, input_type)
+                except Exception as e:
+                    logger.error(f"Routing error: {e}")
+                    yield make_error_event(f"Failed to route request: {str(e)}")
+                    return
 
             if "error" in routing:
                 yield make_error_event("Routing Failed: " + routing["error"])
                 return
 
             sub_problems = routing.get("sub_problems", [])
-
             if not sub_problems and "domain" in routing:
                 sub_problems = [routing]
 
@@ -652,24 +665,12 @@ async def solve(request: Request):
                 yield make_error_event("Could not extract any problems from the input. Please rephrase.")
                 return
 
-            yield make_event({
-                "type": "meta",
-                "summary": routing.get("summary", "Processing problems..."),
-                "model": routing.get("_model", "unknown"),
-                "count": len(sub_problems),
-            })
-
+            # ── Solve all sub-problems ──
             for idx, sub in enumerate(sub_problems):
                 domain = sub.get("domain", "unknown").lower()
                 problem_type = sub.get("problem_type", "unknown").lower()
                 problem_id = sub.get("id", f"p{idx}")
-                confidence = sub.get("confidence", 0.0)
                 sub = clean_sub_problem(domain, sub)
-
-                yield make_event({
-                    "type": "step",
-                    "content": f"Dispatching Sub-problem {idx + 1}: [{domain}] {problem_type} (confidence: {confidence:.0%})",
-                })
 
                 if "parameters" not in sub:
                     sub["parameters"] = {}
@@ -712,7 +713,6 @@ async def solve(request: Request):
                     return
 
                 solver_fn = select_solver(domain, problem_type)
-
                 if not solver_fn:
                     yield make_event({
                         "type": "final",
@@ -751,22 +751,32 @@ async def solve(request: Request):
                                     chunk["answer"] = ans_text + "\n\n**Note: No option matched the computed result.**"
 
                             yield make_event(chunk)
-                except TimeoutError:
+                except asyncio.TimeoutError:
                     logger.warning(f"Solver timeout in sub-problem {idx} ({domain}/{problem_type})")
                     yield make_error_event(
                         f"Solver Timeout [{domain}]: computation exceeded the safe time limit.",
                         problem_id,
                     )
                 except Exception as e:
-                    logger.error(f"Solver error in sub-problem {idx} ({domain}/{problem_type}): {e}")
+                    logger.error(f"Solver error in sub-problem {idx} ({domain}/{problem_type}): {e}", exc_info=True)
                     yield make_error_event(
                         f"Solver Error [{domain}]: {str(e)}", problem_id
                     )
+        except Exception as e:
+            logger.error(f"Unexpected error in event generator: {e}", exc_info=True)
+            yield make_error_event(f"Unexpected error: {str(e)}")
         finally:
             if acquired_slot:
                 solve_semaphore.release()
+                logger.debug("Semaphore released")
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    response = StreamingResponse(event_generator(), media_type="text/event-stream")
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Connection"] = "keep-alive"
+    return response
 
 
 # Serves the frontend if built
