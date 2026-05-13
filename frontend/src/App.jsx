@@ -113,15 +113,50 @@ export default function App() {
       // FastAPI SSE endpoint:
       // POST /api/compute/solve
       const endpoint = API_BASE ? `${API_BASE}/api/compute/solve` : '/api/compute/solve';
+      const safeStringifyPayload = (value) => {
+        const seen = new WeakSet();
+        return JSON.stringify(value, (_key, val) => {
+          if (val === null || val === undefined) return val;
+
+          const t = typeof val;
+          if (t === 'function' || t === 'symbol') return undefined;
+
+          // Drop DOM nodes / React internals if they ever get mixed into payload
+          if (typeof Element !== 'undefined' && val instanceof Element) return undefined;
+          if (typeof HTMLElement !== 'undefined' && val instanceof HTMLElement) return undefined;
+          if (typeof SVGElement !== 'undefined' && val instanceof SVGElement) return undefined;
+
+          if (t === 'object') {
+            if (seen.has(val)) return undefined;
+            seen.add(val);
+
+            // React elements/fibers often have $$typeof; dropping is safest
+            const maybeType = (val && val.$$typeof);
+            if (maybeType && typeof maybeType === 'string') return undefined;
+          }
+
+          return val;
+        });
+      };
+
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream'
+        },
+        body: safeStringifyPayload(payload),
         signal: abortControllerRef.current.signal
       });
 
       if (!response.ok) {
         setMessages(prev => prev.map(m => m.id === assistantMessage.id ? { ...m, error: { message: 'Failed to connect to engine.' }, isProcessing: false } : m));
+        setIsProcessing(false);
+        return;
+      }
+
+      if (!response.body) {
+        setMessages(prev => prev.map(m => m.id === assistantMessage.id ? { ...m, error: { message: 'Engine returned no stream (SSE body missing).' }, isProcessing: false } : m));
         setIsProcessing(false);
         return;
       }
@@ -132,83 +167,61 @@ export default function App() {
       let receivedFinal = false;
 
       while (true) {
-        try {
-          const { value, done } = await reader.read();
-          if (done) break;
+        const { value, done } = await reader.read();
+        if (done) break;
 
-          buffer += decoder.decode(value, { stream: true });
-          const parts = buffer.split('\n\n');
-          buffer = parts.pop() || '';
+        buffer += decoder.decode(value);
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();
 
-          parts.forEach(part => {
-            part = part.trim();
-            if (!part.startsWith('data: ')) return;
-
+        parts.forEach(part => {
+          if (part.startsWith('data: ')) {
+            let data;
             try {
-              const jsonStr = part.replace('data: ', '');
-              const data = JSON.parse(jsonStr);
-
-              setMessages(prev => prev.map(msg => {
-                if (msg.id !== assistantMessage.id) return msg;
-
-                if (data.type === 'step') {
-                  const content = String(data.content || '');
-                  const isInternal = content.includes('Studio Kernel:') || content.includes('Dispatching Sub-problem') || content.includes('Classifying') || content.includes('extracting');
-                  if (!isInternal) {
-                    return { ...msg, steps: [...msg.steps, data.content] };
-                  }
-                  return msg;
-                } else if (data.type === 'table') {
-                  return { ...msg, tables: [...(msg.tables || []), data] };
-                } else if (data.type === 'units') {
-                  return { ...msg, units: [...msg.units, ...data.data] };
-                } else if (data.type === 'final') {
-                  receivedFinal = true;
-                  return { ...msg, final: (msg.final ? msg.final + '\n\n' : '') + data.answer };
-                } else if (data.type === 'diagram') {
-                  return { ...msg, diagrams: [...msg.diagrams, data] };
-                } else if (data.type === 'needs_parameters') {
-                  setPendingCompute({ payload, assistantMessage, saveContext });
-                  setMissingParams(data.missing_params || []);
-                  setParameterPrompt(data.problem_description || saveContext.currentInput);
-                  setShowParamDialog(true);
-                  abortControllerRef.current?.abort();
-                  return {
-                    ...msg,
-                    isProcessing: false,
-                    steps: [
-                      ...msg.steps,
-                      data.message || 'Parameter is not specified.',
-                    ],
-                  };
-                } else if (data.type === 'error') {
-                  return { ...msg, error: { message: data.message } };
-                }
-
-                return msg;
-              }));
-            } catch (parseErr) {
-              logger.error('Failed to parse SSE event', parseErr);
+              data = JSON.parse(part.replace('data: ', ''));
+            } catch (e) {
+              // Don’t kill the SSE loop if we received an incomplete/malformed chunk.
+              // Keep buffer logic intact and allow subsequent SSE events to arrive.
+              return;
             }
-          });
-        } catch (readErr) {
-          logger.error('Error reading stream', readErr);
-          throw readErr;
-        }
-      }
+            
+            setMessages(prev => prev.map(msg => {
+              if (msg.id !== assistantMessage.id) return msg;
 
-      // Flush remaining buffer
-      if (buffer.trim().startsWith('data: ')) {
-        try {
-          const data = JSON.parse(buffer.replace('data: ', ''));
-          if (data.type === 'final') receivedFinal = true;
-        } catch (e) {
-          logger.warn('Could not parse final buffer', buffer);
-        }
-      }
+              if (data.type === 'step') {
+                return { ...msg, steps: [...msg.steps, data.content] };
+              } else if (data.type === 'table') {
+                return { ...msg, tables: [...(msg.tables || []), data] };
+              } else if (data.type === 'units') {
+                return { ...msg, units: [...msg.units, ...data.data] };
+              } else if (data.type === 'final') {
+                return { ...msg, final: (msg.final ? msg.final + '\n\n' : '') + data.answer };
+              } else if (data.type === 'diagram') {
+                return { ...msg, diagrams: [...msg.diagrams, data] };
+              } else if (data.type === 'needs_parameters') {
+                setPendingCompute({ payload, assistantMessage, saveContext });
+                setMissingParams(data.missing_params || []);
+                setParameterPrompt(data.problem_description || saveContext.currentInput);
+                setShowParamDialog(true);
 
-      if (!receivedFinal) {
-        logger.warn('Stream ended without final response');
+                // Do NOT abort the stream here; aborting often triggers "Connection interrupted"
+                // before the backend has finished sending the needs_parameters response.
+                return {
+                  ...msg,
+                  isProcessing: false,
+                  steps: [
+                    ...msg.steps,
+                    data.message || 'Parameter is not specified.',
+                  ],
+                };
+              } else if (data.type === 'error') {
+                return { ...msg, error: { message: data.message }, isProcessing: false };
+              }
+
+              return msg;
+            }));
+          }
+        });
       }
 
       setMessages(prev => {
@@ -234,12 +247,10 @@ export default function App() {
       });
 
     } catch (error) {
-      if (error.name === 'AbortError') return;
-      if (error.message) logger.error('Fetch error:', error.message);
-      const errorMsg = error.message === 'Failed to fetch'
-        ? 'Connection failed. Please check your internet and try again.'
-        : 'Connection interrupted.';
-      setMessages(prev => prev.map(m => m.id === assistantMessage.id ? { ...m, error: { message: errorMsg }, isProcessing: false } : m));
+      if (error?.name === 'AbortError') return;
+      console.error('SSE/compute fetch failed:', error);
+      const details = error?.message ? ` (${error.message})` : '';
+      setMessages(prev => prev.map(m => m.id === assistantMessage.id ? { ...m, error: { message: `Connection interrupted.${details}` }, isProcessing: false } : m));
     } finally {
       setIsProcessing(false);
     }

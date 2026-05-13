@@ -36,6 +36,12 @@ solve_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SOLVES)
 request_windows = {}
 request_windows_lock = asyncio.Lock()
 
+def make_error_event(message: str, problem_id: str = None) -> str:
+    payload = {"type": "error", "message": message}
+    if problem_id is not None:
+        payload["problem_id"] = problem_id
+    return f"data: {json.dumps(payload)}\n\n"
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "uptime": "running"}
@@ -56,6 +62,7 @@ app.add_middleware(
 class SafetyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         client_ip = request.client.host if request.client else "unknown"
+        path = request.url.path
 
         content_length = request.headers.get("content-length")
         if content_length:
@@ -68,11 +75,24 @@ class SafetyMiddleware(BaseHTTPMiddleware):
             except ValueError:
                 pass
 
+        # SSE solve endpoint should be treated more leniently because the request
+        # stays open and poor network conditions can make users retry quickly.
+        is_solve_stream = path == "/api/compute/solve" and "text/event-stream" in str(request.headers.get("accept", "")).lower()
+        window_max = RATE_LIMIT_MAX_REQUESTS
+        if is_solve_stream:
+            window_max = int(os.environ.get("RATE_LIMIT_MAX_REQUESTS_STREAM", str(RATE_LIMIT_MAX_REQUESTS * 2)))
+
         now = time.monotonic()
         async with request_windows_lock:
             window = request_windows.get(client_ip, [])
             window = [stamp for stamp in window if now - stamp < RATE_LIMIT_WINDOW_SECONDS]
-            if len(window) >= RATE_LIMIT_MAX_REQUESTS:
+            if len(window) >= window_max:
+                # If it's SSE, respond as SSE event so client stream handling doesn't break.
+                if is_solve_stream:
+                    async def _rate_limited():
+                        yield make_error_event("Too many requests. Please slow down and try again shortly.")
+                    return StreamingResponse(_rate_limited(), media_type="text/event-stream", status_code=429)
+
                 return JSONResponse(
                     {"error": "Too many requests. Please slow down and try again shortly."},
                     status_code=429,
@@ -81,7 +101,7 @@ class SafetyMiddleware(BaseHTTPMiddleware):
             request_windows[client_ip] = window
 
         response = await call_next(request)
-        response.headers["X-Studio-RateLimit-Limit"] = str(RATE_LIMIT_MAX_REQUESTS)
+        response.headers["X-Studio-RateLimit-Limit"] = str(window_max)
         response.headers["X-Studio-RateLimit-Window"] = str(RATE_LIMIT_WINDOW_SECONDS)
         response.headers["X-Studio-Max-Concurrent-Solves"] = str(MAX_CONCURRENT_SOLVES)
         return response

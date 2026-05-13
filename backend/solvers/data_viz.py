@@ -13,12 +13,55 @@ from solvers.utils import clean_math_string, safe_sympify, simplify_math, detect
 
 
 def _coerce_plot_values(values, x_vals):
+    """
+    Coerce lambdified outputs into a numeric float array for plotting.
+
+    SymPy lambdify with "numpy" *should* return numeric types, but in some
+    cases (e.g. partially-evaluated expressions) it can return an object
+    array containing SymPy expressions. This helper forces those to float.
+
+    If values still contain symbolic variables (i.e. cannot be evaluated to
+    a real number), we return NaN for those entries rather than failing the
+    entire plot.
+    """
+    def _to_float_or_nan(v) -> float:
+        try:
+            # Quick numeric case
+            if isinstance(v, (int, float, np.floating, np.integer)):
+                return float(v)
+
+            # SymPy expression case
+            if isinstance(v, sp.Basic):
+                # If still symbolic, we can't reliably float it.
+                if getattr(v, "free_symbols", None):
+                    if len(v.free_symbols) > 0:
+                        return float("nan")
+                return float(sp.N(v))
+
+            return float(v)
+        except Exception:
+            try:
+                if isinstance(v, sp.Basic) and len(getattr(v, "free_symbols", [])) > 0:
+                    return float("nan")
+                return float(sp.N(v))
+            except Exception:
+                return float("nan")
+
     if np.isscalar(values):
-        return np.full_like(x_vals, float(values), dtype=float)
-    array = np.asarray(values, dtype=float)
+        return np.full_like(x_vals, _to_float_or_nan(values), dtype=float)
+
+    array = np.asarray(values)
     if array.shape == ():
-        return np.full_like(x_vals, float(array), dtype=float)
-    return array
+        return np.full_like(x_vals, _to_float_or_nan(array), dtype=float)
+
+    # Fast path: already numeric
+    if np.issubdtype(array.dtype, np.number):
+        return array.astype(float, copy=False)
+
+    # Object array (likely SymPy expressions)
+    coerced = [_to_float_or_nan(v) for v in array.ravel()]
+    coerced_arr = np.asarray(coerced, dtype=float).reshape(array.shape)
+    return coerced_arr
 
 
 def _extract_inline_series(raw_query):
@@ -51,7 +94,21 @@ async def solve_function_plot(sub):
     yield {"type": "step", "content": "Initializing Advanced Data Visualization Kernel..."}
     params = sub.get("parameters", {})
     expr_str = params.get("expression", "")
-    
+
+    # Normalize assignment-like inputs from word problems/logging:
+    # Examples:
+    #   "f = sin(x)"   -> "sin(x)"
+    #   "y=cos(x)"     -> "cos(x)"
+    #   "y = f(x)+1"   -> "f(x)+1"
+    # Only strip when the LHS looks like a simple variable/name (not a multi-variable equation).
+    expr_str = (expr_str or "").strip()
+    assignment_match = re.match(r"^\s*([A-Za-z_]\w*)\s*=\s*(.+)$", expr_str)
+    if assignment_match:
+        lhs, rhs = assignment_match.group(1), assignment_match.group(2).strip()
+        # If rhs still contains other assignment-like "=", keep original (likely a real equation).
+        if "=" not in rhs:
+            expr_str = rhs
+
     # Handle common trigonometric names
     trig_replacements = {
         r"\bsine\b": "sin",
