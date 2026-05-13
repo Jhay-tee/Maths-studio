@@ -107,13 +107,39 @@ export default function App() {
       // FastAPI SSE endpoint:
       // POST /api/compute/solve
       const endpoint = API_BASE ? `${API_BASE}/api/compute/solve` : '/api/compute/solve';
+      const safeStringifyPayload = (value) => {
+        const seen = new WeakSet();
+        return JSON.stringify(value, (_key, val) => {
+          if (val === null || val === undefined) return val;
+
+          const t = typeof val;
+          if (t === 'function' || t === 'symbol') return undefined;
+
+          // Drop DOM nodes / React internals if they ever get mixed into payload
+          if (typeof Element !== 'undefined' && val instanceof Element) return undefined;
+          if (typeof HTMLElement !== 'undefined' && val instanceof HTMLElement) return undefined;
+          if (typeof SVGElement !== 'undefined' && val instanceof SVGElement) return undefined;
+
+          if (t === 'object') {
+            if (seen.has(val)) return undefined;
+            seen.add(val);
+
+            // React elements/fibers often have $$typeof; dropping is safest
+            const maybeType = (val && val.$$typeof);
+            if (maybeType && typeof maybeType === 'string') return undefined;
+          }
+
+          return val;
+        });
+      };
+
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'text/event-stream'
         },
-        body: JSON.stringify(payload),
+        body: safeStringifyPayload(payload),
         signal: abortControllerRef.current.signal
       });
 
