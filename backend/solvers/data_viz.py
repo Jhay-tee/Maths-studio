@@ -19,32 +19,47 @@ def _coerce_plot_values(values, x_vals):
     SymPy lambdify with "numpy" *should* return numeric types, but in some
     cases (e.g. partially-evaluated expressions) it can return an object
     array containing SymPy expressions. This helper forces those to float.
+
+    If values still contain symbolic variables (i.e. cannot be evaluated to
+    a real number), we return NaN for those entries rather than failing the
+    entire plot.
     """
-    if np.isscalar(values):
+    def _to_float_or_nan(v) -> float:
         try:
-            return np.full_like(x_vals, float(values), dtype=float)
+            # Quick numeric case
+            if isinstance(v, (int, float, np.floating, np.integer)):
+                return float(v)
+
+            # SymPy expression case
+            if isinstance(v, sp.Basic):
+                # If still symbolic, we can't reliably float it.
+                if getattr(v, "free_symbols", None):
+                    if len(v.free_symbols) > 0:
+                        return float("nan")
+                return float(sp.N(v))
+
+            return float(v)
         except Exception:
-            # Last resort: SymPy numeric evaluation
-            return np.full_like(x_vals, float(sp.N(values)), dtype=float)
+            try:
+                if isinstance(v, sp.Basic) and len(getattr(v, "free_symbols", [])) > 0:
+                    return float("nan")
+                return float(sp.N(v))
+            except Exception:
+                return float("nan")
+
+    if np.isscalar(values):
+        return np.full_like(x_vals, _to_float_or_nan(values), dtype=float)
 
     array = np.asarray(values)
     if array.shape == ():
-        try:
-            return np.full_like(x_vals, float(array), dtype=float)
-        except Exception:
-            return np.full_like(x_vals, float(sp.N(array)), dtype=float)
+        return np.full_like(x_vals, _to_float_or_nan(array), dtype=float)
 
     # Fast path: already numeric
     if np.issubdtype(array.dtype, np.number):
         return array.astype(float, copy=False)
 
     # Object array (likely SymPy expressions)
-    coerced = []
-    for v in array.ravel():
-        try:
-            coerced.append(float(v))
-        except Exception:
-            coerced.append(float(sp.N(v)))
+    coerced = [_to_float_or_nan(v) for v in array.ravel()]
     coerced_arr = np.asarray(coerced, dtype=float).reshape(array.shape)
     return coerced_arr
 
