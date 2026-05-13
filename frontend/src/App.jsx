@@ -1,4 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
+
+const logger = {
+  error: (msg, data) => console.error(`[Error] ${msg}`, data),
+  warn: (msg, data) => console.warn(`[Warn] ${msg}`, data),
+  info: (msg, data) => console.log(`[Info] ${msg}`, data),
+};
 import { 
   History, 
   Trash2
@@ -123,54 +129,86 @@ export default function App() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let receivedFinal = false;
 
       while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
+        try {
+          const { value, done } = await reader.read();
+          if (done) break;
 
-        buffer += decoder.decode(value);
-        const parts = buffer.split('\n\n');
-        buffer = parts.pop();
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() || '';
 
-        parts.forEach(part => {
-          if (part.startsWith('data: ')) {
-            const data = JSON.parse(part.replace('data: ', ''));
-            
-            setMessages(prev => prev.map(msg => {
-              if (msg.id !== assistantMessage.id) return msg;
+          parts.forEach(part => {
+            part = part.trim();
+            if (!part.startsWith('data: ')) return;
 
-              if (data.type === 'step') {
-                return { ...msg, steps: [...msg.steps, data.content] };
-              } else if (data.type === 'table') {
-                return { ...msg, tables: [...(msg.tables || []), data] };
-              } else if (data.type === 'units') {
-                return { ...msg, units: [...msg.units, ...data.data] };
-              } else if (data.type === 'final') {
-                return { ...msg, final: (msg.final ? msg.final + '\n\n' : '') + data.answer };
-              } else if (data.type === 'diagram') {
-                return { ...msg, diagrams: [...msg.diagrams, data] };
-              } else if (data.type === 'needs_parameters') {
-                setPendingCompute({ payload, assistantMessage, saveContext });
-                setMissingParams(data.missing_params || []);
-                setParameterPrompt(data.problem_description || saveContext.currentInput);
-                setShowParamDialog(true);
-                abortControllerRef.current?.abort();
-                return {
-                  ...msg,
-                  isProcessing: false,
-                  steps: [
-                    ...msg.steps,
-                    data.message || 'Parameter is not specified.',
-                  ],
-                };
-              } else if (data.type === 'error') {
-                return { ...msg, error: { message: data.message } };
-              }
+            try {
+              const jsonStr = part.replace('data: ', '');
+              const data = JSON.parse(jsonStr);
 
-              return msg;
-            }));
-          }
-        });
+              setMessages(prev => prev.map(msg => {
+                if (msg.id !== assistantMessage.id) return msg;
+
+                if (data.type === 'step') {
+                  const content = String(data.content || '');
+                  const isInternal = content.includes('Studio Kernel:') || content.includes('Dispatching Sub-problem') || content.includes('Classifying') || content.includes('extracting');
+                  if (!isInternal) {
+                    return { ...msg, steps: [...msg.steps, data.content] };
+                  }
+                  return msg;
+                } else if (data.type === 'table') {
+                  return { ...msg, tables: [...(msg.tables || []), data] };
+                } else if (data.type === 'units') {
+                  return { ...msg, units: [...msg.units, ...data.data] };
+                } else if (data.type === 'final') {
+                  receivedFinal = true;
+                  return { ...msg, final: (msg.final ? msg.final + '\n\n' : '') + data.answer };
+                } else if (data.type === 'diagram') {
+                  return { ...msg, diagrams: [...msg.diagrams, data] };
+                } else if (data.type === 'needs_parameters') {
+                  setPendingCompute({ payload, assistantMessage, saveContext });
+                  setMissingParams(data.missing_params || []);
+                  setParameterPrompt(data.problem_description || saveContext.currentInput);
+                  setShowParamDialog(true);
+                  abortControllerRef.current?.abort();
+                  return {
+                    ...msg,
+                    isProcessing: false,
+                    steps: [
+                      ...msg.steps,
+                      data.message || 'Parameter is not specified.',
+                    ],
+                  };
+                } else if (data.type === 'error') {
+                  return { ...msg, error: { message: data.message } };
+                }
+
+                return msg;
+              }));
+            } catch (parseErr) {
+              logger.error('Failed to parse SSE event', parseErr);
+            }
+          });
+        } catch (readErr) {
+          logger.error('Error reading stream', readErr);
+          throw readErr;
+        }
+      }
+
+      // Flush remaining buffer
+      if (buffer.trim().startsWith('data: ')) {
+        try {
+          const data = JSON.parse(buffer.replace('data: ', ''));
+          if (data.type === 'final') receivedFinal = true;
+        } catch (e) {
+          logger.warn('Could not parse final buffer', buffer);
+        }
+      }
+
+      if (!receivedFinal) {
+        logger.warn('Stream ended without final response');
       }
 
       setMessages(prev => {
@@ -197,7 +235,11 @@ export default function App() {
 
     } catch (error) {
       if (error.name === 'AbortError') return;
-      setMessages(prev => prev.map(m => m.id === assistantMessage.id ? { ...m, error: { message: 'Connection interrupted.' }, isProcessing: false } : m));
+      logger.error('Fetch error:', error);
+      const errorMsg = error.message === 'Failed to fetch'
+        ? 'Connection failed. Please check your internet and try again.'
+        : 'Connection interrupted.';
+      setMessages(prev => prev.map(m => m.id === assistantMessage.id ? { ...m, error: { message: errorMsg }, isProcessing: false } : m));
     } finally {
       setIsProcessing(false);
     }
