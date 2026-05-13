@@ -175,7 +175,7 @@ export default function App() {
                   ],
                 };
               } else if (data.type === 'error') {
-                return { ...msg, error: { message: data.message } };
+                return { ...msg, error: { message: data.message }, isProcessing: false };
               }
 
               return msg;

@@ -13,12 +13,40 @@ from solvers.utils import clean_math_string, safe_sympify, simplify_math, detect
 
 
 def _coerce_plot_values(values, x_vals):
+    """
+    Coerce lambdified outputs into a numeric float array for plotting.
+
+    SymPy lambdify with "numpy" *should* return numeric types, but in some
+    cases (e.g. partially-evaluated expressions) it can return an object
+    array containing SymPy expressions. This helper forces those to float.
+    """
     if np.isscalar(values):
-        return np.full_like(x_vals, float(values), dtype=float)
-    array = np.asarray(values, dtype=float)
+        try:
+            return np.full_like(x_vals, float(values), dtype=float)
+        except Exception:
+            # Last resort: SymPy numeric evaluation
+            return np.full_like(x_vals, float(sp.N(values)), dtype=float)
+
+    array = np.asarray(values)
     if array.shape == ():
-        return np.full_like(x_vals, float(array), dtype=float)
-    return array
+        try:
+            return np.full_like(x_vals, float(array), dtype=float)
+        except Exception:
+            return np.full_like(x_vals, float(sp.N(array)), dtype=float)
+
+    # Fast path: already numeric
+    if np.issubdtype(array.dtype, np.number):
+        return array.astype(float, copy=False)
+
+    # Object array (likely SymPy expressions)
+    coerced = []
+    for v in array.ravel():
+        try:
+            coerced.append(float(v))
+        except Exception:
+            coerced.append(float(sp.N(v)))
+    coerced_arr = np.asarray(coerced, dtype=float).reshape(array.shape)
+    return coerced_arr
 
 
 def _extract_inline_series(raw_query):
