@@ -106,14 +106,64 @@ def simplify_math(expr):
 def detect_variables(expr):
     """
     Returns a list of free symbols in an expression.
+    Falls back to regex extraction if SymPy parsing yields no free symbols.
     """
-    if expr is None: return []
+    if expr is None:
+        return []
+
     try:
         if isinstance(expr, str):
-            expr = safe_sympify(expr)
-        return sorted([s.name for s in expr.free_symbols])
+            parsed = safe_sympify(expr)
+        else:
+            parsed = expr
+
+        free = sorted([s.name for s in getattr(parsed, "free_symbols", set())])
+        if free:
+            return free
     except Exception:
-        return []
+        # Continue to regex fallback below
+        pass
+
+    # Regex fallback: extract likely symbol names from the raw expression text.
+    if isinstance(expr, str):
+        text = clean_math_string(expr)
+    else:
+        text = str(expr)
+
+    # Common words/functions to ignore in variable extraction
+    ignore = {
+        "sin","cos","tan","cot","sec","csc",
+        "ln","log","exp","sqrt","pi","E",
+        "and","or","not",
+        "solve","find","calculate","determine",
+        "from","to"
+    }
+
+    # Special handling: if it's an equation/system, split around '=' and extract from both sides.
+    if "=" in text:
+        sides = []
+        for part in text.split("="):
+            if part.strip():
+                sides.append(part)
+        text = " ".join(sides)
+
+    # Grab tokens that look like identifiers (letters/underscore start, alnum/underscore continue)
+    tokens = re.findall(r"[A-Za-z_]\w*", text)
+    candidates = [t for t in tokens if t not in ignore]
+
+    # Preserve order as they appear (then unique)
+    seen = set()
+    out = []
+    for t in candidates:
+        # Exclude numeric-like tokens early
+        if re.fullmatch(r"\d+(\.\d+)?", t):
+            continue
+        if t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+
+    return out
 
 def validate_physical_params(params, constraints=None):
     """

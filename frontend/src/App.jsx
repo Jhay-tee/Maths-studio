@@ -44,6 +44,7 @@ export default function App() {
   const abortControllerRef = useRef(null);
   const scrollRef = useRef(null);
   const fileInputRef = useRef(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
 
   useEffect(() => {
     loadHistory();
@@ -58,14 +59,31 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (scrollRef.current) {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const onScroll = () => {
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      // allow 24px leeway for rounding/animation
+      setIsAtBottom(distanceFromBottom < 24);
+    };
+
+    onScroll();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    // Auto-scroll only if user is at/near the bottom.
+    if (scrollRef.current && isAtBottom) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
+
     // Save current session whenever messages change
     if (messages.length > 0) {
       saveCurrentSession(messages);
     }
-  }, [messages]);
+  }, [messages, isAtBottom]);
 
   const loadSession = async () => {
     const saved = await loadCurrentSession();

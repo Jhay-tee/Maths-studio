@@ -62,13 +62,27 @@ async def solve_algebra(data):
         # Often separated by comma, semicolon, newline, or " and "
         delimiters = [";", "\n", " and "]
         equations_raw = [expr_str]
-        for d in delimiters:
-            if d.lower() in expr_str.lower():
-                # Correctly split while ignoring case for " and "
-                pattern = re.compile(re.escape(d), re.IGNORECASE)
-                equations_raw = [e.strip() for e in pattern.split(expr_str) if e.strip()]
-                break
-        
+
+        # Robust system splitting:
+        # If multiple '=' appear but delimiter splitting fails (e.g. "x+y=20 y-x=2"),
+        # extract each equation by pattern: <lhs>=<rhs>
+        if expr_str.count("=") > 1:
+            eq_pattern = re.compile(
+                r"([^=]+?)\s*=\s*([^=]+?)(?=(?:\s+[A-Za-z_])|$)",
+                re.DOTALL
+            )
+            matches = eq_pattern.findall(expr_str)
+            if len(matches) >= 2:
+                equations_raw = [f"{clean_math_string(lhs)}={clean_math_string(rhs)}".strip() for lhs, rhs in matches]
+
+        # Delimiter-based split fallback (keeps previous behavior)
+        if len(equations_raw) == 1:
+            for d in delimiters:
+                if d.lower() in expr_str.lower():
+                    pattern = re.compile(re.escape(d), re.IGNORECASE)
+                    equations_raw = [e.strip() for e in pattern.split(expr_str) if e.strip()]
+                    break
+
         # If still only one, check for comma delimiter but only if there are equals signs
         if len(equations_raw) == 1 and "," in expr_str and expr_str.count("=") > 1:
             equations_raw = [e.strip() for e in expr_str.split(",") if e.strip()]
