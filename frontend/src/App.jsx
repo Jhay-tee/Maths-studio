@@ -143,7 +143,14 @@ export default function App() {
 
         parts.forEach(part => {
           if (part.startsWith('data: ')) {
-            const data = JSON.parse(part.replace('data: ', ''));
+            let data;
+            try {
+              data = JSON.parse(part.replace('data: ', ''));
+            } catch (e) {
+              // Don’t kill the SSE loop if we received an incomplete/malformed chunk.
+              // Keep buffer logic intact and allow subsequent SSE events to arrive.
+              return;
+            }
             
             setMessages(prev => prev.map(msg => {
               if (msg.id !== assistantMessage.id) return msg;
@@ -207,8 +214,10 @@ export default function App() {
       });
 
     } catch (error) {
-      if (error.name === 'AbortError') return;
-      setMessages(prev => prev.map(m => m.id === assistantMessage.id ? { ...m, error: { message: 'Connection interrupted.' }, isProcessing: false } : m));
+      if (error?.name === 'AbortError') return;
+      console.error('SSE/compute fetch failed:', error);
+      const details = error?.message ? ` (${error.message})` : '';
+      setMessages(prev => prev.map(m => m.id === assistantMessage.id ? { ...m, error: { message: `Connection interrupted.${details}` }, isProcessing: false } : m));
     } finally {
       setIsProcessing(false);
     }
