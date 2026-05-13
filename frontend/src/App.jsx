@@ -235,7 +235,7 @@ export default function App() {
 
     } catch (error) {
       if (error.name === 'AbortError') return;
-      logger.error('Fetch error:', error);
+      if (error.message) logger.error('Fetch error:', error.message);
       const errorMsg = error.message === 'Failed to fetch'
         ? 'Connection failed. Please check your internet and try again.'
         : 'Connection interrupted.';

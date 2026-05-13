@@ -400,6 +400,9 @@ def parse_numeric_list(value):
     if not text:
         return []
 
+    numbers = re.findall(r"[-+]?\d*\.?\d+", text)
+    return [_to_float(n) for n in numbers if _to_float(n) is not None]
+
 
 def resolve_numeric_expressions(params):
     resolved = dict(params or {})
@@ -552,12 +555,3 @@ def polish_final_answer(answer, domain="", problem_type=""):
 
     text = text.replace("\n- **", "\n- **").replace("\n\n\n", "\n\n")
     return text.strip()
-
-    text = text.strip("[]()")
-    parts = [segment.strip() for segment in re.split(r"[,\s]+", text) if segment.strip()]
-    values = []
-    for part in parts:
-        maybe = _to_float(part)
-        if maybe is not None:
-            values.append(maybe)
-    return values
