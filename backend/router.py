@@ -13,6 +13,14 @@ Design principles
 • Embedding upgrade path is built-in: swap _embed() and enable USE_EMBEDDINGS
   env var when you need to go beyond keyword rules.
 • All public symbols used by main.py are at the bottom of this file.
+
+v2 changes
+──────────
+• Added pre_extract() — domain-specific parameter pre-extraction that runs
+  BEFORE Gemini, so algebra systems and structural problems arrive at the
+  solver with clean, parser-ready data even when Gemini misbehaves.
+• ClassificationResult now carries a `pre_extracted_params` dict that
+  main.py merges into the Gemini output, giving L1 data priority.
 """
 
 from __future__ import annotations
@@ -107,6 +115,8 @@ DOMAIN_RULES: list[DomainRule] = [
             _p(r"\bfactor(ise|ize)\b"),
             _p(r"\bsolve\s+for\s+[a-z]\b"),
             _p(r"\bsimplif(y|ication)\b"),
+            # Catches bare multi-line equation systems (3 or more variable equations)
+            _p(r"[0-9][a-zA-Z]\s*[+\-]\s*[0-9][a-zA-Z]"),
         ],
         problem_types={
             "quadratic":     "quadratic_equation",
@@ -507,16 +517,151 @@ for _rule in DOMAIN_RULES:
             _IndexEntry(rule=_rule, weight=_rule.base_weight)
         )
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public result type
 # ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass
 class ClassificationResult:
-    domain:          str
-    problem_type:    str
-    confidence:      float
-    matched_signals: list[str]    # for logging / debug
+    domain:               str
+    problem_type:         str
+    confidence:           float
+    matched_signals:      list[str]         # for logging / debug
+    pre_extracted_params: dict              = field(default_factory=dict)
+    """
+    Parameters that L1 extracted deterministically (e.g. algebra equations).
+    main.py merges these INTO the Gemini-extracted params so that clean
+    L1 data always wins over potentially mangled Gemini data.
+    """
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Domain-specific pre-extractors
+# These run INSIDE fast_classify, before Gemini ever sees the input.
+# They produce clean, solver-ready params that bypass Gemini's extraction.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Matches one equation line: optional label like "1)" or "eq1:" then math
+_EQ_LINE_RE = re.compile(
+    r"(?:^|\n)\s*(?:\d+[\)\.:]|eq\s*\d*\s*:?)?\s*"   # optional label
+    r"([A-Za-z0-9][^=\n]*=[^=\n][^\n]*)",              # LHS = RHS
+    re.IGNORECASE,
+)
+
+# Detects bare implicit-multiplication: "3x", "4y", "2z"
+_IMPLICIT_MUL_RE = re.compile(r"(\d)([A-Za-z])")
+
+# English prose markers — if expression contains these it's not pure math
+_PROSE_RE = re.compile(
+    r"\b(solve|find|calculate|determine|what|the\s+equation|"
+    r"three|variables|given|such|where|linear|system)\b",
+    re.IGNORECASE,
+)
+
+
+def _normalize_equation(eq: str) -> str:
+    """
+    Turn a human-written equation into a SymPy-ready string.
+
+    '3x + 4y - 2z = 12'  →  '3*x + 4*y - 2*z - 12'
+    """
+    eq = eq.strip()
+    if "=" in eq:
+        lhs, rhs = eq.split("=", 1)
+        # Move RHS to left: LHS - RHS
+        rhs = rhs.strip()
+        lhs = lhs.strip()
+        # Handle negative RHS gracefully
+        if rhs.startswith("-"):
+            expr = f"({lhs}) + ({rhs})"
+        else:
+            expr = f"({lhs}) - ({rhs})"
+    else:
+        expr = eq
+
+    # Insert explicit multiplication: 3x → 3*x
+    expr = _IMPLICIT_MUL_RE.sub(r"\1*\2", expr)
+    return expr.strip()
+
+
+def _pre_extract_algebra(text: str) -> dict:
+    """
+    Extract equation systems directly from the raw user text.
+    Returns {"equations": [...], "problem_type_hint": "..."}
+    or {} if nothing parseable found.
+    """
+    lines = re.split(r"[\n;]|(?<=[0-9])\s*\)\s*(?=[0-9A-Za-z])", text)
+    equations = []
+    for line in lines:
+        line = line.strip()
+        # Must contain a letter (variable), an operator, and an equals sign
+        if not re.search(r"[A-Za-z]", line):
+            continue
+        if "=" not in line:
+            continue
+        # Reject pure English sentences
+        if _PROSE_RE.search(line) and not re.search(r"\d", line):
+            continue
+        # Must look like math (has digit or operator around the =)
+        if not re.search(r"[\d+\-*/^]", line):
+            continue
+        equations.append(_normalize_equation(line))
+
+    if not equations:
+        return {}
+
+    hint = "simultaneous_equations" if len(equations) > 1 else "linear_equation"
+    return {"equations": equations, "problem_type_hint": hint}
+
+
+def _pre_extract_structural(text: str) -> dict:
+    """
+    Extract the most common structural parameters from plain English.
+    Returns a partial params dict; missing keys will be filled by Gemini.
+    """
+    params: dict = {}
+    lowered = text.lower()
+
+    # Span / length
+    m = re.search(r"(?:length|span|beam)\s+(?:of\s+)?([0-9.]+)\s*(m|cm|mm)\b", lowered)
+    if m:
+        val = float(m.group(1))
+        unit = m.group(2)
+        if unit == "cm":  val /= 100
+        elif unit == "mm": val /= 1000
+        params["L"] = val
+
+    # UDL
+    m = re.search(r"([0-9.]+)\s*(kn|n)\s*/\s*m\b", lowered)
+    if m:
+        val = float(m.group(1))
+        if "kn" in m.group(2).lower(): val *= 1000
+        params["w"] = val
+
+    # Point load
+    m = re.search(r"(?:point\s+load|concentrated\s+load)\s+(?:of\s+)?([0-9.]+)\s*(kn|n)\b", lowered)
+    if m:
+        val = float(m.group(1))
+        if "kn" in m.group(2).lower(): val *= 1000
+        params["P"] = val
+
+    # Beam type
+    if re.search(r"simply\s+supported", lowered):
+        params["beam_type"] = "simply_supported"
+    elif re.search(r"cantilever", lowered):
+        params["beam_type"] = "cantilever"
+    elif re.search(r"fixed[\s-]end|fixed\s+beam", lowered):
+        params["beam_type"] = "fixed"
+
+    return params
+
+
+# Domain → pre-extractor function
+_PRE_EXTRACTORS = {
+    "algebra":    _pre_extract_algebra,
+    "structural": _pre_extract_structural,
+}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -561,6 +706,9 @@ def fast_classify(text: str) -> Optional[ClassificationResult]:
 
     Returns ClassificationResult when confident, None when uncertain
     (caller should escalate to Gemini for full extraction).
+
+    If a domain-specific pre-extractor fires, the result carries
+    `pre_extracted_params` so main.py can skip or correct Gemini output.
     """
     if not text or not text.strip():
         return None
@@ -603,9 +751,28 @@ def fast_classify(text: str) -> Optional[ClassificationResult]:
             if m:
                 signals.append(m.group(0))
 
+    # ── Domain-specific pre-extraction ───────────────────────────────────────
+    pre_params: dict = {}
+    extractor = _PRE_EXTRACTORS.get(best_domain)
+    if extractor:
+        try:
+            pre_params = extractor(text)  # use original text, not lowered
+            if pre_params:
+                logger.info(
+                    f"L1 pre-extracted {len(pre_params)} param(s) "
+                    f"for domain={best_domain}: {list(pre_params.keys())}"
+                )
+        except Exception as exc:
+            logger.warning(f"Pre-extractor failed for {best_domain}: {exc}")
+
+    # Use pre-extracted problem_type_hint if available
+    problem_type = pre_params.pop("problem_type_hint", None) or \
+                   _infer_problem_type(best_domain, lowered)
+
     return ClassificationResult(
         domain=best_domain,
-        problem_type=_infer_problem_type(best_domain, lowered),
+        problem_type=problem_type,
         confidence=round(best_score, 3),
         matched_signals=signals[:10],
+        pre_extracted_params=pre_params,
 )
