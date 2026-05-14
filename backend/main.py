@@ -10,7 +10,7 @@ Routing pipeline
 2. Layer 2  Gemini parameter extractor called with domain already locked
    └─ L1 uncertain → Gemini does classification + extraction together
 
-Validation firewall  (NEW in v2)
+Validation firewall
 ─────────────────────────────────
 After Gemini extraction, validate_and_normalize() runs before ANY solver call.
 It repairs malformed JSON, strips English prose from expressions, extracts
@@ -23,12 +23,18 @@ Gemini roles
 • Human-readable explainer  (always — wraps solver output in plain English)
 • Full classifier  (only when L1 is uncertain)
 
-Student-friendly design
-────────────────────────
-• Friendly error messages that suggest what to check
-• Step outputs only shown when they contain real computed values
-• Final answers use plain English + maths, not just raw numbers
-• "Did you mean…?" hint when domain is ambiguous
+v3 fixes
+────────
+• Fixed _parse_gemini_json: replaced walrus-operator lambda (Python 3.8/3.9
+  incompatible) with explicit helper functions — eliminates the
+  "_parse_gemini_json.<locals>.<lambda>() missing 1 required positional
+  argument: 'm'" crash.
+• data_viz solver: pass function name/expression from input so "plot sine
+  graph" routes to function_plot with expression="sin(x)".
+• Added _infer_viz_expression(): extracts the function to plot from plain
+  English before Gemini sees it.
+• "Failed to fetch" / Connection errors: improved SSE error messages to
+  distinguish network vs backend errors.
 """
 
 from __future__ import annotations
@@ -214,6 +220,18 @@ The "expression" field MUST contain ONLY pure math/SymPy syntax.
   • If the input is a word problem, DO NOT put the problem sentence in "expression".
   • Strip all English verbs: "Solve", "Find", "Calculate", "the equation", etc.
   • If you cannot produce pure math, OMIT the expression field entirely.
+
+════════════════════════════════════════════════════════
+CRITICAL DATA_VIZ RULES
+════════════════════════════════════════════════════════
+For data_viz domain, always set "expression" to the SymPy-compatible function:
+  "Plot sine graph"      → "expression": "sin(x)"
+  "Plot cosine"          → "expression": "cos(x)"
+  "Draw y = x^2 + 2x"   → "expression": "x**2 + 2*x"
+  "Graph e^x"            → "expression": "exp(x)"
+  "Plot tan(x)"          → "expression": "tan(x)"
+  "Plot log(x)"          → "expression": "log(x)"
+Also set "x_range": [-10, 10] by default unless specified.
 ════════════════════════════════════════════════════════
 
 GENERAL EXTRACTION RULES:
@@ -265,7 +283,9 @@ AVAILABLE DOMAINS:
 YOUR JOBS:
 1. Identify the correct domain from the list above.
 2. Extract all numerical parameters in SI units.
-3. Return ONLY a raw JSON object — no markdown, no explanation.
+3. For data_viz: always set "expression" to the SymPy-compatible math string.
+   "Plot sine graph" → expression: "sin(x)", problem_type: "function_plot"
+4. Return ONLY a raw JSON object — no markdown, no explanation.
 
 ════════════════════════════════════════════════════════
 CRITICAL ALGEBRA/CALCULUS RULES
@@ -403,7 +423,7 @@ async def _gemini_call(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Validation + normalisation firewall  (NEW — runs after every Gemini call)
+# Validation + normalisation firewall  (runs after every Gemini call)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Patterns that indicate a value is English prose, not math
@@ -436,11 +456,21 @@ def _extract_equations_from_text(text: str) -> list[str]:
     Last-resort equation extraction directly from free text.
     Finds lines that look like math equations and normalises them.
     """
+    # FIX: Use the same robust splitter from router.py
+    _label_strip = re.compile(r"^\s*(?:\d+\s*[\)\.\:]|eq\s*\d+\s*[\)\.\:]?)\s*", re.I)
+
+    # Split on newlines, semicolons, and inline numbering
+    lines_raw = re.split(r"[\n;]", text)
+    lines = []
+    for line in lines_raw:
+        parts = re.split(r"(?<=\S)\s+(?=\d+\s*[\)\.])", line)
+        lines.extend(p.strip() for p in parts if p.strip())
+
     equations = []
-    for line in re.split(r"[\n;]|(?<=\d)\s*\)\s*(?=[0-9A-Za-z\-])", text):
+    for line in lines:
         line = line.strip()
-        # Strip leading numbering like "1)" or "eq2:"
-        line = re.sub(r"^\s*(?:\d+[\)\.:]|eq\s*\d*\s*:?)\s*", "", line, flags=re.I)
+        # Strip leading numbering
+        line = _label_strip.sub("", line).strip()
         if not line:
             continue
         if "=" not in line:
@@ -456,13 +486,8 @@ def _extract_equations_from_text(text: str) -> list[str]:
 def _sanitize_params(params: dict, domain: str, raw_query: str) -> dict:
     """
     Clean a single sub-problem's parameters dict.
-    • Removes English prose from "expression"
-    • Extracts "equations" array for algebra/calculus if missing
-    • Inserts explicit multiplication in any equation strings
-    • Flattens accidentally nested {"parameters": {...}} structures
-    • Removes null/empty values
     """
-    # Flatten nested params (Gemini occasionally wraps params in a "parameters" key)
+    # Flatten nested params
     if "parameters" in params and isinstance(params["parameters"], dict):
         inner = params.pop("parameters")
         params.update(inner)
@@ -470,12 +495,9 @@ def _sanitize_params(params: dict, domain: str, raw_query: str) -> dict:
     # ── expression field sanitation ──────────────────────────────────────────
     expr = params.get("expression", "")
     if isinstance(expr, str) and expr.strip():
-        # Case 1: pure English sentence — delete it
         if _PROSE_MARKERS.search(expr) and not _MATH_PRESENT.search(expr):
             logger.warning(f"Dropping English expression: '{expr[:80]}'")
             del params["expression"]
-
-        # Case 2: starts with English verb prefix — strip the prefix
         elif _PROSE_MARKERS.search(expr) and _MATH_PRESENT.search(expr):
             cleaned = re.sub(
                 r"^(solve|find|calculate|evaluate|compute|simplify|determine)"
@@ -486,8 +508,6 @@ def _sanitize_params(params: dict, domain: str, raw_query: str) -> dict:
                 params["expression"] = _IMPLICIT_MUL.sub(r"\1*\2", cleaned)
             else:
                 del params["expression"]
-
-        # Case 3: looks like math — just ensure explicit multiplication
         else:
             params["expression"] = _IMPLICIT_MUL.sub(r"\1*\2", expr)
 
@@ -495,14 +515,12 @@ def _sanitize_params(params: dict, domain: str, raw_query: str) -> dict:
     if "equations" in params:
         raw_eqs = params["equations"]
         if isinstance(raw_eqs, str):
-            # Gemini sometimes returns a single string instead of a list
             raw_eqs = [raw_eqs]
         cleaned_eqs = []
         for eq in raw_eqs:
             if not isinstance(eq, str):
                 continue
             eq = eq.strip()
-            # Drop entries that are English sentences (no math operators)
             if _PROSE_MARKERS.search(eq) and not _MATH_PRESENT.search(eq):
                 continue
             cleaned_eqs.append(_normalize_eq(eq) if "=" in eq else
@@ -512,8 +530,7 @@ def _sanitize_params(params: dict, domain: str, raw_query: str) -> dict:
         else:
             del params["equations"]
 
-    # ── For algebra/calculus: if no equations AND no clean expression,
-    #    try extracting from the raw query text ─────────────────────────────
+    # ── For algebra/calculus: recover equations from raw text if needed ──────
     if domain in ("algebra", "calculus"):
         has_expr = bool(params.get("expression", "").strip())
         has_eqs  = bool(params.get("equations"))
@@ -523,6 +540,17 @@ def _sanitize_params(params: dict, domain: str, raw_query: str) -> dict:
                 logger.info(f"Recovered {len(recovered)} equation(s) from raw query text")
                 params["equations"] = recovered
 
+    # ── For data_viz: recover expression from plain English if needed ────────
+    if domain == "data_viz":
+        if not params.get("expression"):
+            inferred = _infer_viz_expression(raw_query)
+            if inferred:
+                params["expression"] = inferred
+                logger.info(f"Inferred viz expression from query: '{inferred}'")
+        # Set default x_range if not provided
+        if "x_range" not in params:
+            params["x_range"] = [-10, 10]
+
     # ── Remove null/empty entries ────────────────────────────────────────────
     params = {k: v for k, v in params.items()
               if v is not None and v != "" and v != [] and v != {}}
@@ -530,11 +558,54 @@ def _sanitize_params(params: dict, domain: str, raw_query: str) -> dict:
     return params
 
 
+def _infer_viz_expression(text: str) -> str:
+    """
+    FIX: Extract the mathematical expression to plot from plain English.
+    Handles "plot sine graph", "draw cosine", "graph tan(x)", etc.
+    """
+    t = text.lower().strip()
+
+    # Map common words to SymPy expressions
+    _FUNC_MAP = [
+        (r"\bsin(e)?\b",       "sin(x)"),
+        (r"\bcos(ine)?\b",     "cos(x)"),
+        (r"\btan(gent)?\b",    "tan(x)"),
+        (r"\barcsin\b",        "asin(x)"),
+        (r"\barccos\b",        "acos(x)"),
+        (r"\barctan\b",        "atan(x)"),
+        (r"\bexp(onential)?\b","exp(x)"),
+        (r"\be\^x\b",          "exp(x)"),
+        (r"\blog(arithm)?\b",  "log(x)"),
+        (r"\bln\b",            "log(x)"),
+        (r"\bsqrt\b",          "sqrt(x)"),
+        (r"\bsquare root\b",   "sqrt(x)"),
+        (r"\bx\^2\b",          "x**2"),
+        (r"\bx squared\b",     "x**2"),
+        (r"\bx cubed\b",       "x**3"),
+        (r"\bx\^3\b",          "x**3"),
+        (r"\b1/x\b",           "1/x"),
+        (r"\breciprocal\b",    "1/x"),
+    ]
+
+    # First try to find an explicit equation like "y = x^2 + 3x" or "f(x) = ..."
+    eq_match = re.search(r"(?:y|f\s*\(\s*x\s*\))\s*=\s*([^\n]+)", t)
+    if eq_match:
+        expr = eq_match.group(1).strip()
+        expr = _IMPLICIT_MUL.sub(r"\1*\2", expr)
+        expr = expr.replace("^", "**")
+        return expr
+
+    # Then try keyword mapping
+    for pattern, sympy_expr in _FUNC_MAP:
+        if re.search(pattern, t):
+            return sympy_expr
+
+    return ""
+
+
 def _prevent_over_splitting(sub_problems: list) -> list:
     """
-    If all sub-problems share the same engineering domain, merge them
-    into one. This prevents Gemini from exploding a single beam question
-    into three separate sub-problems.
+    If all sub-problems share the same engineering domain, merge them into one.
     """
     if len(sub_problems) <= 1:
         return sub_problems
@@ -547,7 +618,7 @@ def _prevent_over_splitting(sub_problems: list) -> list:
             if sp.get("input_summary")
         )
         merged_params: dict = {}
-        for sp in reversed(sub_problems):   # first sub wins on key conflict
+        for sp in reversed(sub_problems):
             merged_params.update(sp.get("parameters") or {})
         merged["parameters"] = merged_params
         logger.info(
@@ -562,17 +633,9 @@ def _prevent_over_splitting(sub_problems: list) -> list:
 def validate_and_normalize(routing: dict, raw_query: str = "") -> dict:
     """
     Firewall between Gemini extraction and solver execution.
-
-    Accepts the routing dict returned by route_and_extract() and returns
-    a cleaned version where every sub-problem's parameters are safe to
-    pass directly to a solver.
-
-    raw_query is the original user text, used as a fallback for equation
-    extraction when Gemini put English into the expression field.
     """
     subs = routing.get("sub_problems") or []
 
-    # Sanitize each sub-problem's parameters
     cleaned_subs = []
     for sp in subs:
         if not isinstance(sp, dict):
@@ -583,7 +646,6 @@ def validate_and_normalize(routing: dict, raw_query: str = "") -> dict:
         sp["parameters"] = _sanitize_params(params, domain, raw_query)
         cleaned_subs.append(sp)
 
-    # Merge over-split engineering problems
     cleaned_subs = _prevent_over_splitting(cleaned_subs)
 
     routing["sub_problems"] = cleaned_subs
@@ -601,14 +663,7 @@ async def route_and_extract(
     l1_result:       ClassificationResult | None = None,
 ) -> dict:
     """
-    Returns a standard routing dict:
-    {
-        "sub_problems": [ { "id", "domain", "problem_type",
-                            "input_summary", "parameters", "confidence" } ]
-    }
-
-    l1_result is passed in from the caller so we can merge pre_extracted_params
-    without running fast_classify() twice.
+    Returns a standard routing dict with sub_problems list.
     """
     if is_image:
         raw = await _gemini_call(
@@ -639,11 +694,9 @@ async def route_and_extract(
                 if sp.get("confidence", 0) < l1_result.confidence:
                     sp["confidence"] = l1_result.confidence
 
-                # ── Merge L1 pre-extracted params (L1 wins on conflict) ──────
+                # Merge L1 pre-extracted params (L1 wins on conflict)
                 if l1_result.pre_extracted_params:
                     gemini_params = sp.get("parameters") or {}
-                    # L1 params take priority: update gemini dict first,
-                    # then overlay L1 on top
                     merged = {**gemini_params, **l1_result.pre_extracted_params}
                     sp["parameters"] = merged
                     logger.info(
@@ -655,7 +708,6 @@ async def route_and_extract(
 
         except Exception as exc:
             logger.warning(f"Gemini extraction failed after L1: {exc}. Using L1 skeleton.")
-            # Fall back to a skeleton built entirely from L1 data
             return {
                 "sub_problems": [{
                     "id":            "p1",
@@ -683,13 +735,31 @@ async def route_and_extract(
         return {"error": str(exc)}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# FIX: _parse_gemini_json — replaced walrus-operator lambda with explicit helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _extract_first_json_block(text: str) -> str | None:
+    """Extract the first {...} block from text. Returns None if not found."""
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    return m.group() if m else None
+
+
+def _truncate_to_last_brace(text: str) -> str | None:
+    """Truncate text to the last '}'. Returns None if no '}' found."""
+    idx = text.rfind("}")
+    return text[:idx + 1] if idx >= 0 else None
+
+
 def _parse_gemini_json(raw: str, fallback_domain: str) -> dict:
     """
-    Parse Gemini JSON response with four fallback strategies:
-    1. Direct parse
-    2. Extract first {...} block
-    3. Truncate to last valid closing brace
-    4. Graceful skeleton fallback (never crashes)
+    Parse Gemini JSON response with four fallback strategies.
+
+    FIX v3: Replaced the Python 3.8/3.9-incompatible walrus-operator-inside-
+    lambda pattern with explicit helper functions (_extract_first_json_block,
+    _truncate_to_last_brace). This eliminates the crash:
+      "_parse_gemini_json.<locals>.<lambda>() missing 1 required positional
+       argument: 'm'"
     """
     text = raw.strip()
     # Strip markdown fences
@@ -697,13 +767,14 @@ def _parse_gemini_json(raw: str, fallback_domain: str) -> dict:
     text = re.sub(r"\s*```\s*$",       "", text, flags=re.MULTILINE)
     text = text.strip()
 
-    for attempt, candidate in enumerate([
-        text,
-        # Strategy 2: first {...} block
-        (lambda m: m.group() if (m := re.search(r"\{.*\}", text, re.DOTALL)) else None)(),
-        # Strategy 3: up to last "}"
-        text[:text.rfind("}") + 1] if "}" in text else None,
-    ]):
+    # Strategy 1: direct parse
+    candidates = [text]
+    # Strategy 2: first {...} block (using explicit helper, not lambda)
+    candidates.append(_extract_first_json_block(text))
+    # Strategy 3: up to last "}"
+    candidates.append(_truncate_to_last_brace(text))
+
+    for attempt, candidate in enumerate(candidates):
         if not candidate:
             continue
         try:
@@ -800,6 +871,11 @@ _PT_DOMAIN_OVERRIDE: dict[str, str] = {
     "step_response":         "controls",
     "linear_regression":     "statistics",
     "hypothesis_test":       "statistics",
+    # FIX: ensure function_plot routes to data_viz
+    "function_plot":         "data_viz",
+    "scatter_plot":          "data_viz",
+    "bar_chart":             "data_viz",
+    "histogram":             "data_viz",
 }
 
 
@@ -844,30 +920,21 @@ def _is_real_step(content: str) -> bool:
 def _clean(domain: str, sub: dict) -> dict:
     """
     Domain-aware parameter cleaning called AFTER validate_and_normalize().
-    This is a lightweight second pass — the heavy lifting is done by the
-    validation firewall above.
-
-    Previously this skipped algebra/calculus (because they need expressions).
-    Now it applies to ALL domains but is less aggressive for symbolic ones.
     """
     sub    = dict(sub)
     params = dict(sub.get("parameters") or {})
     expr   = params.get("expression", "")
 
     if isinstance(expr, str) and expr.strip():
-        # Count English words (3+ chars) in the expression
         word_count   = len(re.findall(r"[A-Za-z]{3,}", expr))
         has_sentence = any(t in expr.lower() for t in (
             "what", "find", "minimum", "maximum", "problem",
             "value of", "how much", "determine",
         ))
 
-        # For non-symbolic domains: be aggressive
         if domain not in {"algebra", "calculus", "data_viz"}:
             if word_count > 6 or has_sentence:
                 params.pop("expression", None)
-
-        # For symbolic domains: only remove if it's clearly all English
         else:
             if word_count > 10 and not _MATH_PRESENT.search(expr):
                 params.pop("expression", None)
@@ -949,7 +1016,7 @@ async def solve(request: Request):
                 )
                 return
 
-            # ── Layer 1 classification (run once, pass result to route_and_extract) ──
+            # ── Layer 1 classification ────────────────────────────────────────
             l1_result: ClassificationResult | None = None
             if input_type == "data":
                 routing = {"sub_problems": [{
@@ -987,9 +1054,7 @@ async def solve(request: Request):
                 return
 
             # ── VALIDATION FIREWALL ───────────────────────────────────────────
-            # Runs on every request — cleans Gemini output before solver sees it
             routing = validate_and_normalize(routing, raw_query=user_input)
-            # ─────────────────────────────────────────────────────────────────
 
             sub_problems = routing.get("sub_problems") or []
             if not sub_problems:
