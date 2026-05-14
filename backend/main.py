@@ -5,8 +5,17 @@ FastAPI backend with two-layer routing and student-friendly responses.
 Routing pipeline
 ────────────────
 1. Layer 1  router.fast_classify()     deterministic, zero I/O, O(n_tokens)
+   └─ L1 now also runs domain-specific pre-extractors (algebra equations,
+      structural params) and stores them in ClassificationResult.pre_extracted_params
 2. Layer 2  Gemini parameter extractor called with domain already locked
    └─ L1 uncertain → Gemini does classification + extraction together
+
+Validation firewall  (NEW in v2)
+─────────────────────────────────
+After Gemini extraction, validate_and_normalize() runs before ANY solver call.
+It repairs malformed JSON, strips English prose from expressions, extracts
+equation arrays from algebra input, prevents over-splitting of engineering
+problems, and merges L1 pre-extracted params (which always win on conflict).
 
 Gemini roles
 ────────────
@@ -109,7 +118,6 @@ class SafetyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         client_ip = request.client.host if request.client else "unknown"
 
-        # Payload size
         cl = request.headers.get("content-length")
         if cl:
             try:
@@ -118,7 +126,6 @@ class SafetyMiddleware(BaseHTTPMiddleware):
             except ValueError:
                 pass
 
-        # Rate limiting
         is_sse = (
             request.url.path == "/api/compute/solve"
             and "text/event-stream" in request.headers.get("accept", "").lower()
@@ -189,37 +196,52 @@ YOUR ONLY JOBS:
 2. Identify the specific problem type within that domain.
 3. Return ONLY a raw JSON object — no markdown, no explanation, no preamble.
 
-EXTRACTION RULES:
+════════════════════════════════════════════════════════
+CRITICAL ALGEBRA/CALCULUS RULES  (READ CAREFULLY)
+════════════════════════════════════════════════════════
+For simultaneous equations or any equation system:
+  ✗ WRONG:  "expression": "Solve the system of three linear equations..."
+  ✓ RIGHT:  "equations": ["3*x + 4*y - 2*z - 12", "2*x - y + 5*z - 9", "x + 3*y + z - 8"]
+
+Rules for the "equations" array:
+  • Each entry is LHS − RHS form (move everything to the left side).
+  • Use explicit multiplication: 3x → 3*x, 4y → 4*y, 2z → 2*z.
+  • NO English words inside any equation string.
+  • For a single equation, still use "equations": ["..."] not "expression".
+
+The "expression" field MUST contain ONLY pure math/SymPy syntax.
+  • No English words whatsoever.
+  • If the input is a word problem, DO NOT put the problem sentence in "expression".
+  • Strip all English verbs: "Solve", "Find", "Calculate", "the equation", etc.
+  • If you cannot produce pure math, OMIT the expression field entirely.
+════════════════════════════════════════════════════════
+
+GENERAL EXTRACTION RULES:
 - Normalise ALL values to SI units:
     kN → ×1000  |  cm → ÷100  |  mm → ÷1000  |  GPa → ×1e9
     kPa → ×1e3  |  minutes → ×60  |  hours → ×3600
-    °C in a formula context (ideal gas etc.) → add 273.15
-- For tolerances like "10 ± 0.5 m" or "5 kg with 2% error":
-    nominal → key as-is  (e.g. "m": 5)
-    absolute sigma → key + "_sigma"  (e.g. "m_sigma": 0.1)
-- The "expression" field must contain ONLY pure math syntax.
-  No English words. Remove "Solve", "Find", "Calculate", "the equation", etc.
-- For word problems, DO NOT put the problem sentence in "expression".
-  Extract numbers into named keys instead.
-- Split multi-part questions into separate items in sub_problems.
+- For tolerances: nominal → key as-is; absolute sigma → key + "_sigma"
+- Split multi-part questions into separate items in sub_problems ONLY if
+  they are genuinely different domains. Engineering problems asking for
+  reactions + shear + bending moment are ONE sub_problem, not three.
 - DO NOT SOLVE the problem. DO NOT provide numerical answers.
 
 OUTPUT (return ONLY this JSON, nothing else):
-{
+{{
   "sub_problems": [
-    {
+    {{
       "id": "p1",
-      "problem_type": "<specific type e.g. projectile_motion>",
+      "problem_type": "<specific type e.g. simultaneous_equations>",
       "input_summary": "<clean one-line restatement of the problem>",
-      "parameters": {
-        "expression": "<pure math only, or omit>",
+      "parameters": {{
+        "equations": ["<eq1 in LHS-RHS=0 form>", ...],
         "<param_key>": <numeric_value>,
         ...
-      },
+      }},
       "confidence": 0.97
-    }
+    }}
   ]
-}
+}}
 """
 
 # ── Prompt B: full classification + extraction (L1 uncertain) ────────────────
@@ -245,29 +267,40 @@ YOUR JOBS:
 2. Extract all numerical parameters in SI units.
 3. Return ONLY a raw JSON object — no markdown, no explanation.
 
-Same extraction rules as before:
+════════════════════════════════════════════════════════
+CRITICAL ALGEBRA/CALCULUS RULES
+════════════════════════════════════════════════════════
+For equation systems, use an "equations" array, NOT "expression":
+  • Each entry: LHS − RHS (everything on left side)
+  • Explicit multiplication: 3x → 3*x
+  • Zero English words inside equation strings
+  • "expression" field = pure SymPy math only, or omit it
+
+ANTI-SPLITTING RULE: Multi-ask engineering questions (reactions + shear +
+bending moment, or find P + Q + R) are ONE sub_problem, not several.
+════════════════════════════════════════════════════════
+
+Same extraction rules:
 - Normalise to SI.
-- Tolerances → _sigma suffix.
-- expression = pure math only.
+- expression = pure math only, or omit.
 - Do NOT solve.
 
 OUTPUT (return ONLY this JSON):
-{
+{{
   "sub_problems": [
-    {
+    {{
       "id": "p1",
       "domain": "<one of the listed domains>",
       "problem_type": "<specific type>",
       "input_summary": "<clean one-line restatement>",
-      "parameters": {
-        "expression": "<pure math or omit>",
-        "<key>": <value>,
-        ...
-      },
+      "parameters": {{
+        "equations": ["<optional, for algebra/calculus systems>"],
+        "<key>": <value>
+      }},
       "confidence": 0.97
-    }
+    }}
   ]
-}
+}}
 """
 
 # ── Prompt C: student-friendly explanation wrapper ───────────────────────────
@@ -323,11 +356,6 @@ async def _gemini_call(
     image_b64:     str  | None = None,
     temperature:   float       = 0.05,
 ) -> str:
-    """
-    Call Gemini with retry across model list.
-    Returns the raw text response.
-    Raises RuntimeError on total failure.
-    """
     contents = _history_to_contents(history or [])
 
     if image_b64:
@@ -375,13 +403,202 @@ async def _gemini_call(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Validation + normalisation firewall  (NEW — runs after every Gemini call)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Patterns that indicate a value is English prose, not math
+_PROSE_MARKERS = re.compile(
+    r"\b(solve|find|calculate|determine|what\s+is|the\s+equation|"
+    r"three|four|five|variables|given\s+that|such\s+that|where|"
+    r"linear|system|simultaneous|unknown)\b",
+    re.IGNORECASE,
+)
+_MATH_PRESENT  = re.compile(r"[\d=+\-*/^\\()\[\]]")
+_IMPLICIT_MUL  = re.compile(r"(\d)([A-Za-z])")
+
+# Engineering domains where multi-ask questions should NOT be split
+_MERGE_DOMAINS = {"structural", "mechanics", "fluids", "thermo", "circuits"}
+
+
+def _normalize_eq(eq: str) -> str:
+    """Move RHS to left side and insert explicit multiplication."""
+    eq = eq.strip()
+    if "=" in eq:
+        lhs, rhs = eq.split("=", 1)
+        rhs = rhs.strip()
+        lhs = lhs.strip()
+        eq = f"({lhs}) - ({rhs})" if not rhs.startswith("-") else f"({lhs}) + ({rhs})"
+    return _IMPLICIT_MUL.sub(r"\1*\2", eq).strip()
+
+
+def _extract_equations_from_text(text: str) -> list[str]:
+    """
+    Last-resort equation extraction directly from free text.
+    Finds lines that look like math equations and normalises them.
+    """
+    equations = []
+    for line in re.split(r"[\n;]|(?<=\d)\s*\)\s*(?=[0-9A-Za-z\-])", text):
+        line = line.strip()
+        # Strip leading numbering like "1)" or "eq2:"
+        line = re.sub(r"^\s*(?:\d+[\)\.:]|eq\s*\d*\s*:?)\s*", "", line, flags=re.I)
+        if not line:
+            continue
+        if "=" not in line:
+            continue
+        if not re.search(r"[A-Za-z]", line):
+            continue  # no variables
+        if _PROSE_MARKERS.search(line) and not re.search(r"\d", line):
+            continue  # pure English with no numbers
+        equations.append(_normalize_eq(line))
+    return equations
+
+
+def _sanitize_params(params: dict, domain: str, raw_query: str) -> dict:
+    """
+    Clean a single sub-problem's parameters dict.
+    • Removes English prose from "expression"
+    • Extracts "equations" array for algebra/calculus if missing
+    • Inserts explicit multiplication in any equation strings
+    • Flattens accidentally nested {"parameters": {...}} structures
+    • Removes null/empty values
+    """
+    # Flatten nested params (Gemini occasionally wraps params in a "parameters" key)
+    if "parameters" in params and isinstance(params["parameters"], dict):
+        inner = params.pop("parameters")
+        params.update(inner)
+
+    # ── expression field sanitation ──────────────────────────────────────────
+    expr = params.get("expression", "")
+    if isinstance(expr, str) and expr.strip():
+        # Case 1: pure English sentence — delete it
+        if _PROSE_MARKERS.search(expr) and not _MATH_PRESENT.search(expr):
+            logger.warning(f"Dropping English expression: '{expr[:80]}'")
+            del params["expression"]
+
+        # Case 2: starts with English verb prefix — strip the prefix
+        elif _PROSE_MARKERS.search(expr) and _MATH_PRESENT.search(expr):
+            cleaned = re.sub(
+                r"^(solve|find|calculate|evaluate|compute|simplify|determine)"
+                r"\s*[:\-]?\s*",
+                "", expr, flags=re.I,
+            ).strip()
+            if cleaned and _MATH_PRESENT.search(cleaned):
+                params["expression"] = _IMPLICIT_MUL.sub(r"\1*\2", cleaned)
+            else:
+                del params["expression"]
+
+        # Case 3: looks like math — just ensure explicit multiplication
+        else:
+            params["expression"] = _IMPLICIT_MUL.sub(r"\1*\2", expr)
+
+    # ── equations array sanitation ───────────────────────────────────────────
+    if "equations" in params:
+        raw_eqs = params["equations"]
+        if isinstance(raw_eqs, str):
+            # Gemini sometimes returns a single string instead of a list
+            raw_eqs = [raw_eqs]
+        cleaned_eqs = []
+        for eq in raw_eqs:
+            if not isinstance(eq, str):
+                continue
+            eq = eq.strip()
+            # Drop entries that are English sentences (no math operators)
+            if _PROSE_MARKERS.search(eq) and not _MATH_PRESENT.search(eq):
+                continue
+            cleaned_eqs.append(_normalize_eq(eq) if "=" in eq else
+                                _IMPLICIT_MUL.sub(r"\1*\2", eq))
+        if cleaned_eqs:
+            params["equations"] = cleaned_eqs
+        else:
+            del params["equations"]
+
+    # ── For algebra/calculus: if no equations AND no clean expression,
+    #    try extracting from the raw query text ─────────────────────────────
+    if domain in ("algebra", "calculus"):
+        has_expr = bool(params.get("expression", "").strip())
+        has_eqs  = bool(params.get("equations"))
+        if not has_expr and not has_eqs and raw_query:
+            recovered = _extract_equations_from_text(raw_query)
+            if recovered:
+                logger.info(f"Recovered {len(recovered)} equation(s) from raw query text")
+                params["equations"] = recovered
+
+    # ── Remove null/empty entries ────────────────────────────────────────────
+    params = {k: v for k, v in params.items()
+              if v is not None and v != "" and v != [] and v != {}}
+
+    return params
+
+
+def _prevent_over_splitting(sub_problems: list) -> list:
+    """
+    If all sub-problems share the same engineering domain, merge them
+    into one. This prevents Gemini from exploding a single beam question
+    into three separate sub-problems.
+    """
+    if len(sub_problems) <= 1:
+        return sub_problems
+
+    domains = {sp.get("domain", "").lower() for sp in sub_problems}
+    if len(domains) == 1 and domains.issubset(_MERGE_DOMAINS):
+        merged = dict(sub_problems[0])
+        merged["input_summary"] = " | ".join(
+            sp.get("input_summary", "") for sp in sub_problems
+            if sp.get("input_summary")
+        )
+        merged_params: dict = {}
+        for sp in reversed(sub_problems):   # first sub wins on key conflict
+            merged_params.update(sp.get("parameters") or {})
+        merged["parameters"] = merged_params
+        logger.info(
+            f"Merged {len(sub_problems)} sub-problems into one "
+            f"(domain={list(domains)[0]})"
+        )
+        return [merged]
+
+    return sub_problems
+
+
+def validate_and_normalize(routing: dict, raw_query: str = "") -> dict:
+    """
+    Firewall between Gemini extraction and solver execution.
+
+    Accepts the routing dict returned by route_and_extract() and returns
+    a cleaned version where every sub-problem's parameters are safe to
+    pass directly to a solver.
+
+    raw_query is the original user text, used as a fallback for equation
+    extraction when Gemini put English into the expression field.
+    """
+    subs = routing.get("sub_problems") or []
+
+    # Sanitize each sub-problem's parameters
+    cleaned_subs = []
+    for sp in subs:
+        if not isinstance(sp, dict):
+            continue
+        sp = dict(sp)
+        domain = sp.get("domain", "unknown").lower()
+        params = dict(sp.get("parameters") or {})
+        sp["parameters"] = _sanitize_params(params, domain, raw_query)
+        cleaned_subs.append(sp)
+
+    # Merge over-split engineering problems
+    cleaned_subs = _prevent_over_splitting(cleaned_subs)
+
+    routing["sub_problems"] = cleaned_subs
+    return routing
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Routing orchestrator
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def route_and_extract(
-    user_input: str,
-    is_image:   bool,
-    history:    list,
+    user_input:      str,
+    is_image:        bool,
+    history:         list,
+    l1_result:       ClassificationResult | None = None,
 ) -> dict:
     """
     Returns a standard routing dict:
@@ -389,9 +606,10 @@ async def route_and_extract(
         "sub_problems": [ { "id", "domain", "problem_type",
                             "input_summary", "parameters", "confidence" } ]
     }
-    """
 
-    # Images always skip L1 (can't keyword-match pixels)
+    l1_result is passed in from the caller so we can merge pre_extracted_params
+    without running fast_classify() twice.
+    """
     if is_image:
         raw = await _gemini_call(
             system_prompt=_CLASSIFY_AND_EXTRACT_PROMPT,
@@ -401,49 +619,63 @@ async def route_and_extract(
         )
         return _parse_gemini_json(raw, fallback_domain="unknown")
 
-    # ── Layer 1 ──────────────────────────────────────────────────────────────
-    l1 = fast_classify(user_input)
-
-    if l1 is not None:
+    if l1_result is not None:
         logger.info(
-            f"L1 → domain={l1.domain}  type={l1.problem_type}  "
-            f"conf={l1.confidence}  signals={l1.matched_signals}"
+            f"L1 → domain={l1_result.domain}  type={l1_result.problem_type}  "
+            f"conf={l1_result.confidence}  signals={l1_result.matched_signals}"
         )
-        # L1 decided domain; Gemini only extracts parameters
-        prompt = _EXTRACT_PROMPT.format(domain=l1.domain)
+        prompt = _EXTRACT_PROMPT.format(domain=l1_result.domain)
         try:
             raw = await _gemini_call(
                 system_prompt=prompt,
                 user_message=f"Extract parameters.\n\nInput: {user_input}",
                 history=history,
             )
-            routing = _parse_gemini_json(raw, fallback_domain=l1.domain)
-            # L1 domain is authoritative — Gemini cannot override it
+            routing = _parse_gemini_json(raw, fallback_domain=l1_result.domain)
+
+            # L1 domain is authoritative
             for sp in routing.get("sub_problems", []):
-                sp["domain"] = l1.domain
-                if sp.get("confidence", 0) < l1.confidence:
-                    sp["confidence"] = l1.confidence
+                sp["domain"] = l1_result.domain
+                if sp.get("confidence", 0) < l1_result.confidence:
+                    sp["confidence"] = l1_result.confidence
+
+                # ── Merge L1 pre-extracted params (L1 wins on conflict) ──────
+                if l1_result.pre_extracted_params:
+                    gemini_params = sp.get("parameters") or {}
+                    # L1 params take priority: update gemini dict first,
+                    # then overlay L1 on top
+                    merged = {**gemini_params, **l1_result.pre_extracted_params}
+                    sp["parameters"] = merged
+                    logger.info(
+                        f"Merged L1 pre-extracted params into sub-problem: "
+                        f"{list(l1_result.pre_extracted_params.keys())}"
+                    )
+
             return routing
 
         except Exception as exc:
             logger.warning(f"Gemini extraction failed after L1: {exc}. Using L1 skeleton.")
+            # Fall back to a skeleton built entirely from L1 data
             return {
                 "sub_problems": [{
                     "id":            "p1",
-                    "domain":        l1.domain,
-                    "problem_type":  l1.problem_type,
+                    "domain":        l1_result.domain,
+                    "problem_type":  l1_result.problem_type,
                     "input_summary": user_input,
-                    "parameters":    {},
-                    "confidence":    l1.confidence,
+                    "parameters":    l1_result.pre_extracted_params or {},
+                    "confidence":    l1_result.confidence,
                 }]
             }
 
-    # ── Layer 2: L1 uncertain — Gemini classifies + extracts ─────────────────
+    # L1 uncertain — Gemini classifies + extracts
     logger.info("L1 uncertain — escalating to Gemini full classification")
     try:
         raw = await _gemini_call(
             system_prompt=_CLASSIFY_AND_EXTRACT_PROMPT,
-            user_message=f"Classify and extract parameters. Return only JSON.\n\nInput: {user_input}",
+            user_message=(
+                "Classify and extract parameters. Return only JSON.\n\n"
+                f"Input: {user_input}"
+            ),
             history=history,
         )
         return _parse_gemini_json(raw, fallback_domain="unknown")
@@ -452,41 +684,71 @@ async def route_and_extract(
 
 
 def _parse_gemini_json(raw: str, fallback_domain: str) -> dict:
-    """Parse Gemini JSON response, tolerating markdown fences."""
+    """
+    Parse Gemini JSON response with four fallback strategies:
+    1. Direct parse
+    2. Extract first {...} block
+    3. Truncate to last valid closing brace
+    4. Graceful skeleton fallback (never crashes)
+    """
     text = raw.strip()
-    # Strip ```json ... ``` fences
-    text = re.sub(r"^```(?:json)?\s*", "", text)
-    text = re.sub(r"\s*```$",          "", text)
-    try:
-        data = json.loads(text)
-        # Normalise: Gemini sometimes returns flat dict instead of sub_problems list
-        if "sub_problems" not in data:
-            data = {"sub_problems": [{
-                "id":            "p1",
-                "domain":        data.get("domain", fallback_domain),
-                "problem_type":  data.get("problem_type", "general"),
-                "input_summary": data.get("input_summary", ""),
-                "parameters":    data.get("parameters", {}),
-                "confidence":    data.get("confidence", 0.80),
-            }]}
-        return data
-    except json.JSONDecodeError as exc:
-        logger.error(f"Gemini returned invalid JSON: {exc}\nRaw: {raw[:300]}")
-        raise RuntimeError(f"Parameter extractor returned invalid JSON: {exc}")
+    # Strip markdown fences
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\s*```\s*$",       "", text, flags=re.MULTILINE)
+    text = text.strip()
+
+    for attempt, candidate in enumerate([
+        text,
+        # Strategy 2: first {...} block
+        (lambda m: m.group() if (m := re.search(r"\{.*\}", text, re.DOTALL)) else None)(),
+        # Strategy 3: up to last "}"
+        text[:text.rfind("}") + 1] if "}" in text else None,
+    ]):
+        if not candidate:
+            continue
+        try:
+            data = json.loads(candidate)
+            return _normalize_routing_shape(data, fallback_domain)
+        except json.JSONDecodeError:
+            logger.debug(f"JSON parse strategy {attempt + 1} failed")
+
+    logger.warning(f"All JSON strategies failed — using skeleton. Raw[:200]: {raw[:200]}")
+    return {
+        "sub_problems": [{
+            "id":            "p1",
+            "domain":        fallback_domain,
+            "problem_type":  "general",
+            "input_summary": "",
+            "parameters":    {},
+            "confidence":    0.50,
+        }]
+    }
+
+
+def _normalize_routing_shape(data: dict, fallback_domain: str) -> dict:
+    """Ensure output always has the sub_problems list structure."""
+    if "sub_problems" not in data:
+        return {"sub_problems": [{
+            "id":            "p1",
+            "domain":        data.get("domain", fallback_domain),
+            "problem_type":  data.get("problem_type", "general"),
+            "input_summary": data.get("input_summary", ""),
+            "parameters":    data.get("parameters", {}),
+            "confidence":    data.get("confidence", 0.80),
+        }]}
+
+    subs = data["sub_problems"]
+    if not isinstance(subs, list):
+        subs = [subs] if isinstance(subs, dict) else []
+    data["sub_problems"] = [s for s in subs if isinstance(s, dict) and s]
+    return data
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Student-friendly Gemini explainer
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _explain_for_student(
-    input_summary: str,
-    raw_answer:    str,
-) -> str:
-    """
-    Ask Gemini to rewrite the solver's raw markdown answer in plain,
-    encouraging language.  Falls back to the raw answer on any failure.
-    """
+async def _explain_for_student(input_summary: str, raw_answer: str) -> str:
     prompt = _EXPLAIN_PROMPT.format(
         input_summary=input_summary,
         raw_answer=raw_answer,
@@ -495,12 +757,12 @@ async def _explain_for_student(
         explained = await _gemini_call(
             system_prompt=prompt,
             user_message="Rewrite the solution in a friendly, student-oriented style now.",
-            temperature=0.3,   # slightly warmer for natural language
+            temperature=0.3,
         )
         return explained.strip()
     except Exception as exc:
         logger.warning(f"Explainer failed, using raw answer: {exc}")
-        return raw_answer   # graceful degradation
+        return raw_answer
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -521,7 +783,6 @@ _SOLVER_MAP: dict[str, tuple[str, str]] = {
     "data_viz":   ("solvers.data_viz",       "solve_data_viz"),
 }
 
-# problem_type → effective domain (overrides the domain label when more specific)
 _PT_DOMAIN_OVERRIDE: dict[str, str] = {
     "projectile_motion":     "mechanics",
     "kinematics":            "mechanics",
@@ -557,7 +818,7 @@ def _get_solver(domain: str, problem_type: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step filter  (drop hardcoded boilerplate before it reaches the client)
+# Step filter
 # ─────────────────────────────────────────────────────────────────────────────
 
 _BOILERPLATE = [
@@ -573,7 +834,6 @@ def _is_real_step(content: str) -> bool:
         return False
     if any(p.search(c) for p in _BOILERPLATE):
         return False
-    # Must contain a number, math symbol, or LaTeX to be considered real output
     return bool(re.search(r"[\d$=+\-*/^\\()\[\]]", c))
 
 
@@ -582,19 +842,36 @@ def _is_real_step(content: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _clean(domain: str, sub: dict) -> dict:
-    """Strip English prose from expression field for non-symbolic domains."""
-    sub  = dict(sub)
+    """
+    Domain-aware parameter cleaning called AFTER validate_and_normalize().
+    This is a lightweight second pass — the heavy lifting is done by the
+    validation firewall above.
+
+    Previously this skipped algebra/calculus (because they need expressions).
+    Now it applies to ALL domains but is less aggressive for symbolic ones.
+    """
+    sub    = dict(sub)
     params = dict(sub.get("parameters") or {})
     expr   = params.get("expression", "")
-    if isinstance(expr, str):
+
+    if isinstance(expr, str) and expr.strip():
+        # Count English words (3+ chars) in the expression
         word_count   = len(re.findall(r"[A-Za-z]{3,}", expr))
-        has_sentence = any(t in expr.lower() for t in
-                           ("what", "find", "minimum", "maximum", "problem",
-                            "value of", "how much", "determine"))
-        if domain not in {"algebra", "calculus", "data_viz"} and (
-            word_count > 6 or has_sentence
-        ):
-            params.pop("expression", None)
+        has_sentence = any(t in expr.lower() for t in (
+            "what", "find", "minimum", "maximum", "problem",
+            "value of", "how much", "determine",
+        ))
+
+        # For non-symbolic domains: be aggressive
+        if domain not in {"algebra", "calculus", "data_viz"}:
+            if word_count > 6 or has_sentence:
+                params.pop("expression", None)
+
+        # For symbolic domains: only remove if it's clearly all English
+        else:
+            if word_count > 10 and not _MATH_PRESENT.search(expr):
+                params.pop("expression", None)
+
     sub["parameters"] = params
     return sub
 
@@ -662,7 +939,6 @@ async def solve(request: Request):
     async def event_stream() -> AsyncGenerator[str, None]:
         acquired = False
         try:
-            # ── Concurrency gate ──────────────────────────────────────────────
             try:
                 await asyncio.wait_for(solve_semaphore.acquire(), timeout=3.0)
                 acquired = True
@@ -673,7 +949,8 @@ async def solve(request: Request):
                 )
                 return
 
-            # ── Routing ───────────────────────────────────────────────────────
+            # ── Layer 1 classification (run once, pass result to route_and_extract) ──
+            l1_result: ClassificationResult | None = None
             if input_type == "data":
                 routing = {"sub_problems": [{
                     "id":            "p1",
@@ -684,8 +961,17 @@ async def solve(request: Request):
                     "confidence":    1.0,
                 }]}
             else:
+                if not is_image:
+                    try:
+                        l1_result = fast_classify(user_input)
+                    except Exception as exc:
+                        logger.warning(f"L1 classifier error: {exc}")
+                        l1_result = None
+
                 try:
-                    routing = await route_and_extract(user_input, is_image, history)
+                    routing = await route_and_extract(
+                        user_input, is_image, history, l1_result
+                    )
                 except Exception as exc:
                     yield _err(
                         f"Hmm, I had trouble understanding the input: {exc}\n"
@@ -700,6 +986,11 @@ async def solve(request: Request):
                 )
                 return
 
+            # ── VALIDATION FIREWALL ───────────────────────────────────────────
+            # Runs on every request — cleans Gemini output before solver sees it
+            routing = validate_and_normalize(routing, raw_query=user_input)
+            # ─────────────────────────────────────────────────────────────────
+
             sub_problems = routing.get("sub_problems") or []
             if not sub_problems:
                 yield _err(
@@ -708,7 +999,6 @@ async def solve(request: Request):
                 )
                 return
 
-            # ── Solve each sub-problem ────────────────────────────────────────
             for idx, sub in enumerate(sub_problems):
                 domain       = sub.get("domain",       "unknown").lower()
                 problem_type = sub.get("problem_type", "general").lower()
@@ -718,7 +1008,6 @@ async def solve(request: Request):
                 sub = _clean(domain, sub)
                 sub.setdefault("parameters", {})
 
-                # Merge supplemental params from client
                 supplemental = {
                     k: parse_user_supplied_value(v)
                     for k, v in raw_data.get("supplemental_params", {}).items()
@@ -735,7 +1024,6 @@ async def solve(request: Request):
                     sub["parameters"].get("method") or raw_data.get("method")
                 )
 
-                # ── Missing parameter check ───────────────────────────────────
                 missing = find_missing_params(
                     domain, problem_type, sub["parameters"], sub["raw_query"]
                 )
@@ -749,7 +1037,6 @@ async def solve(request: Request):
                     })
                     return
 
-                # ── Get solver ────────────────────────────────────────────────
                 solver_fn = _get_solver(domain, problem_type)
                 if not solver_fn:
                     yield _evt({
@@ -764,7 +1051,6 @@ async def solve(request: Request):
                     })
                     continue
 
-                # ── Stream solver output ──────────────────────────────────────
                 raw_answer_parts: list[str] = []
 
                 try:
@@ -772,23 +1058,19 @@ async def solve(request: Request):
                         async for chunk in solver_fn(sub):
                             chunk["problem_id"] = problem_id
 
-                            # Drop boilerplate steps
                             if chunk.get("type") == "step":
                                 if not _is_real_step(chunk.get("content", "")):
                                     continue
 
-                            # Collect raw answer for the explainer
                             if chunk.get("type") == "final":
                                 raw_answer_parts.append(chunk.get("answer", ""))
 
-                            # Multi-problem prefix
                             if len(sub_problems) > 1 and chunk.get("type") == "final":
                                 chunk["answer"] = (
                                     f"### Part {idx + 1}: {input_summary}\n\n"
                                     + chunk.get("answer", "")
                                 )
 
-                            # Polish
                             if chunk.get("type") == "final":
                                 chunk["answer"] = polish_final_answer(
                                     chunk.get("answer", ""),
@@ -796,7 +1078,6 @@ async def solve(request: Request):
                                     problem_type=problem_type,
                                 )
 
-                            # MCQ matching
                             if chunk.get("type") == "final" and sub.get("options"):
                                 ans = str(chunk.get("answer", ""))
                                 matched = False
@@ -807,7 +1088,7 @@ async def solve(request: Request):
                                         matched = True
                                         break
                                 if not matched:
-                                    chunk["answer"] = ans + "\n\n*(None of the provided options matched the computed result.)*"
+                                    chunk["answer"] = ans + "\n\n*(None of the provided options matched.)*"
 
                             yield _evt(chunk)
 
@@ -827,7 +1108,6 @@ async def solve(request: Request):
                     )
                     continue
 
-                # ── Gemini explanation (runs AFTER solver finishes) ──────────
                 if raw_answer_parts:
                     raw_combined = "\n\n".join(raw_answer_parts)
                     explained = await _explain_for_student(input_summary, raw_combined)
