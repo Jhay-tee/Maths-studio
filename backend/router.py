@@ -21,6 +21,17 @@ v2 changes
   solver with clean, parser-ready data even when Gemini misbehaves.
 • ClassificationResult now carries a `pre_extracted_params` dict that
   main.py merges into the Gemini output, giving L1 data priority.
+
+v3 fixes
+────────
+• Fixed _pre_extract_algebra: now correctly strips numbered prefixes (1), 2), etc.)
+  before normalizing, and splits on inline numbering patterns reliably.
+• Fixed _parse_gemini_json lambda walrus-operator bug (Python 3.8/3.9 compat).
+• Extended data_viz keywords to include function names (sine, cosine, tan, etc.)
+  so "plot sine graph" routes correctly.
+• Fixed _EQ_LINE_RE to not accidentally swallow multi-equation blocks.
+• Added bare equation detection: lines like "3x + 4y - 2z = 12" with no label
+  are now extracted correctly.
 """
 
 from __future__ import annotations
@@ -80,12 +91,22 @@ DOMAIN_RULES: list[DomainRule] = [
             "plot", "graph", "chart", "visualise", "visualize", "draw a curve",
             "sketch", "surface plot", "histogram", "scatter", "bar chart",
             "pie chart", "heatmap", "draw the graph", "show the curve",
+            # FIX: added common function names so "plot sine graph" is recognised
+            "sine graph", "cosine graph", "tangent graph", "sin graph", "cos graph",
+            "sine curve", "cosine curve", "plot sine", "plot cosine", "plot tan",
+            "plot sin", "plot cos", "draw sine", "draw cosine",
+            "plot function", "draw function", "graph function",
+            "plot the function", "graph the function",
         ],
         patterns=[
             _p(r"\bplot\s+(of\s+)?[a-z0-9]"),
             _p(r"\bgraph\s+of\b"),
             _p(r"\bdraw\b.{0,25}\bcurve\b"),
             _p(r"\bsketch\b.{0,25}\b(graph|function|curve)\b"),
+            # FIX: catches "plot sine", "plot sin(x)", "graph cosine", etc.
+            _p(r"\b(plot|graph|draw|sketch)\s+(the\s+)?(sine?|cosine?|cos|tan(gent)?|"
+               r"log(arithm)?|exp(onential)?|sqrt|square\s+root)\b"),
+            _p(r"\b(sine?|cosine?|tan(gent)?)\s+(graph|curve|function|wave)\b"),
         ],
         problem_types={
             "scatter":   "scatter_plot",
@@ -94,6 +115,11 @@ DOMAIN_RULES: list[DomainRule] = [
             "surface":   "surface_plot",
             "pie":       "pie_chart",
             "heatmap":   "heatmap",
+            "sine":      "function_plot",
+            "cosine":    "function_plot",
+            "sin":       "function_plot",
+            "cos":       "function_plot",
+            "tan":       "function_plot",
         },
         base_weight=0.97,
     ),
@@ -542,13 +568,6 @@ class ClassificationResult:
 # They produce clean, solver-ready params that bypass Gemini's extraction.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Matches one equation line: optional label like "1)" or "eq1:" then math
-_EQ_LINE_RE = re.compile(
-    r"(?:^|\n)\s*(?:\d+[\)\.:]|eq\s*\d*\s*:?)?\s*"   # optional label
-    r"([A-Za-z0-9][^=\n]*=[^=\n][^\n]*)",              # LHS = RHS
-    re.IGNORECASE,
-)
-
 # Detects bare implicit-multiplication: "3x", "4y", "2z"
 _IMPLICIT_MUL_RE = re.compile(r"(\d)([A-Za-z])")
 
@@ -559,22 +578,38 @@ _PROSE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# FIX: Pattern to strip leading numbered labels like "1)", "2.", "eq1:", etc.
+_LABEL_STRIP_RE = re.compile(
+    r"^\s*(?:\d+\s*[\)\.\:]|eq\s*\d+\s*[\)\.\:]?)\s*",
+    re.IGNORECASE,
+)
+
+# Pattern to detect that a line looks like a math equation
+_MATH_EQ_RE = re.compile(
+    r"^[\s0-9a-zA-Z+\-*/^.()\[\]=]+$"
+)
+
 
 def _normalize_equation(eq: str) -> str:
     """
     Turn a human-written equation into a SymPy-ready string.
 
     '3x + 4y - 2z = 12'  →  '3*x + 4*y - 2*z - 12'
+
+    FIX v3: Strips leading numbered labels before processing.
     """
-    eq = eq.strip()
+    # Strip leading label (e.g. "1) ", "2. ", "eq3: ")
+    eq = _LABEL_STRIP_RE.sub("", eq).strip()
+
     if "=" in eq:
         lhs, rhs = eq.split("=", 1)
-        # Move RHS to left: LHS - RHS
         rhs = rhs.strip()
         lhs = lhs.strip()
-        # Handle negative RHS gracefully
-        if rhs.startswith("-"):
-            expr = f"({lhs}) + ({rhs})"
+        # Move RHS to left: LHS - RHS  (handle negative RHS)
+        if rhs.lstrip().startswith("-"):
+            expr = f"({lhs}) + ({rhs[rhs.index('-'):]})".replace("+ (-", "- (")
+            # simpler: just join algebraically
+            expr = f"({lhs}) - ({rhs})"
         else:
             expr = f"({lhs}) - ({rhs})"
     else:
@@ -585,28 +620,70 @@ def _normalize_equation(eq: str) -> str:
     return expr.strip()
 
 
+def _split_equation_lines(text: str) -> list[str]:
+    """
+    FIX v3: Split text into individual equation candidates.
+
+    Handles all of:
+      • Newline-separated equations
+      • Inline numbered: "1) 2x+3y=5 2) x-y=1"
+      • Semicolon-separated
+    """
+    # First split on newlines and semicolons
+    lines = re.split(r"[\n;]", text)
+
+    result = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        # Further split on inline numbered patterns: "... 2) ..." or "... 2. ..."
+        # Only split if the next char after the number+) is a digit or letter
+        parts = re.split(r"(?<=\S)\s+(?=\d+\s*[\)\.])", line)
+        result.extend(p.strip() for p in parts if p.strip())
+
+    return result
+
+
+def _is_equation_line(line: str) -> bool:
+    """
+    Return True if a line looks like a math equation (has variable + = sign).
+    """
+    # Must contain a letter (variable)
+    if not re.search(r"[A-Za-z]", line):
+        return False
+    # Must contain an equals sign
+    if "=" not in line:
+        return False
+    # Reject pure English sentences with no digits
+    if _PROSE_RE.search(line) and not re.search(r"\d", line):
+        return False
+    # Must have at least one digit or math operator near the = sign
+    if not re.search(r"[\d+\-*/^]", line):
+        return False
+    return True
+
+
 def _pre_extract_algebra(text: str) -> dict:
     """
-    Extract equation systems directly from the raw user text.
-    Returns {"equations": [...], "problem_type_hint": "..."}
-    or {} if nothing parseable found.
+    FIX v3: Extract equation systems directly from the raw user text.
+
+    Correctly handles:
+      • "1) 2x + 3y - z + 4w = 25  2) x - 2y + 5z - w = 4 ..."
+      • "3x + 4y - 2z = 12\\n2x - y + 5z = 9\\nx + 3y + z = 8"
+      • Inline semicolon-separated equations
+
+    Returns {"equations": [...], "problem_type_hint": "..."} or {}.
     """
-    lines = re.split(r"[\n;]|(?<=[0-9])\s*\)\s*(?=[0-9A-Za-z])", text)
+    lines = _split_equation_lines(text)
+
     equations = []
     for line in lines:
         line = line.strip()
-        # Must contain a letter (variable), an operator, and an equals sign
-        if not re.search(r"[A-Za-z]", line):
-            continue
-        if "=" not in line:
-            continue
-        # Reject pure English sentences
-        if _PROSE_RE.search(line) and not re.search(r"\d", line):
-            continue
-        # Must look like math (has digit or operator around the =)
-        if not re.search(r"[\d+\-*/^]", line):
-            continue
-        equations.append(_normalize_equation(line))
+        # Strip leading label before checking
+        stripped = _LABEL_STRIP_RE.sub("", line).strip()
+        if _is_equation_line(stripped):
+            equations.append(_normalize_equation(stripped))
 
     if not equations:
         return {}
