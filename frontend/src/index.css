@@ -7,11 +7,18 @@
 
 :root {
   font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
-  background-color: #0b0b0b;
-  color: white;
   -webkit-font-smoothing: antialiased;
-  /* Prevent horizontal scroll globally */
   overflow-x: hidden;
+
+  --bg-primary: #0b0b0b;
+  --bg-secondary: #1a1a1a;
+  --bg-tertiary: #222222;
+  --text-primary: #ffffff;
+  --text-muted: rgba(255, 255, 255, 0.5);
+  --text-faint: rgba(255, 255, 255, 0.15);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-soft: rgba(255, 255, 255, 0.15);
+  --input-bg: rgba(255, 255, 255, 0.05);
 }
 
 body {
@@ -19,6 +26,9 @@ body {
   width: 100vw;
   overflow-x: hidden;
   height: 100%;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 #root {
@@ -27,7 +37,20 @@ body {
   overflow-x: hidden;
 }
 
-/* Math and Table wrap/scroll robustness */
+/* ── Light Mode Theme ── */
+body.light-mode {
+  --bg-primary: #f4f4f5;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #e8e8ea;
+  --text-primary: #111111;
+  --text-muted: rgba(0, 0, 0, 0.55);
+  --text-faint: rgba(0, 0, 0, 0.2);
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-soft: rgba(0, 0, 0, 0.15);
+  --input-bg: rgba(0, 0, 0, 0.04);
+}
+
+/* ── Math and Table wrap/scroll robustness ── */
 .math-render, .markdown-content, .prose {
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -59,58 +82,88 @@ body {
   white-space: nowrap;
 }
 
-.math-render p:last-child,
-.markdown-content p:last-child {
-  margin-bottom: 0;
+.math-render table td,
+.math-render table th,
+.markdown-content table td,
+.markdown-content table th {
+  padding: 6px 14px;
+  border: 1px solid var(--border-subtle);
 }
 
-.markdown-content .katex-display,
-.math-render .katex-display {
-  border-radius: 1rem;
-  background: rgba(255, 255, 255, 0.04);
-  padding: 1rem;
+.markdown-content ol,
+.markdown-content ul {
+  padding-left: 1.4em;
 }
 
-.markdown-content ul li::marker,
-.markdown-content ol li::marker,
-.math-render ul li::marker,
-.math-render ol li::marker {
-  color: rgba(255, 255, 255, 0.45);
+.markdown-content li {
+  margin-bottom: 4px;
 }
 
-/* Katex sizing fix for mobile */
-.katex-display {
-  margin: 1em 0;
-  padding: 0.5em 0;
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-}
-
-/* Remove default focus outlines */
-*:focus {
-  outline: none !important;
-}
-
-/* Custom Scrollbar */
+/* ── Scrollbar ── */
 ::-webkit-scrollbar {
   width: 4px;
+  height: 4px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--border-soft);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+}
+
+/* ── Selection ── */
+::selection {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+body.light-mode ::selection {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+/* ── KaTeX ── */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+}
+
+body.light-mode .katex {
+  color: var(--text-primary);
+}
+
+/* ── Code blocks ── */
+.markdown-content pre {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
   border-radius: 10px;
+  padding: 14px 18px;
+  overflow-x: auto;
+  font-size: 12px;
 }
 
-/* Safe area for mobile keyboards / rounded screens */
-.safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom, 2rem);
+.markdown-content code {
+  background: var(--input-bg);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
 }
 
-@media (max-width: 768px) {
-  .message-bubble {
-    max-width: 95% !important;
+/* ── Mobile input ── */
+@media (max-width: 640px) {
+  .katex-display {
+    font-size: 90%;
   }
+}
+
+/* ── Animations ── */
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.animate-pulse-soft {
+  animation: pulse-soft 2s ease-in-out infinite;
 }

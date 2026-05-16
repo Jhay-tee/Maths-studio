@@ -110,7 +110,17 @@ class SafetyMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SafetyMiddleware)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY)
+
+_genai_client = None
+
+def get_genai_client():
+    global _genai_client
+    if _genai_client is None:
+        key = os.environ.get("GEMINI_API_KEY") or GEMINI_API_KEY
+        if not key:
+            raise ValueError("GEMINI_API_KEY is not configured. Please add it to your environment secrets.")
+        _genai_client = genai.Client(api_key=key)
+    return _genai_client
 
 MODELS = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"]
 
@@ -124,7 +134,8 @@ STRICT OPERATIONAL DIRECTIVES:
 1. DO NOT SOLVE THE PROBLEM. Providing numerical answers or solutions is a CRITICAL FAILURE.
 2. DO NOT GENERATE EXPLANATIONS.
 3. YOUR ONLY ROLE: Analyze the user input (text/image) and extract ALL relevant physical/mathematical parameters.
-4. MAP each sub-problem to one of these DOMAINS:
+4. DETECT INCOMPLETE INPUT: If the user says something like "solve simultaneous equations" or "solve a system of equations" WITHOUT providing actual equations or numerical values, set "needs_input": true and populate "required_input_fields" with the fields needed. Example: if user says "solve simultaneous equations", set needs_input=true, required_input_fields=[{name:"equation_1",label:"Equation 1",placeholder:"e.g., 2x + 3y = 7"},{name:"equation_2",label:"Equation 2",placeholder:"e.g., x - y = 1"}].
+5. MAP each sub-problem to one of these DOMAINS:
    - algebra (equations, roots, simplification, simultaneous systems)
    - calculus (integrals, derivatives, limits, differential equations, taylor series, multivariable, laplace, fourier)
    - structural (FEM, trusses, beams, frames, virtual work, moment-area)
@@ -182,6 +193,8 @@ OUTPUT FORMAT: Return ONLY a raw JSON object.
 JSON SCHEMA:
 {
   "summary": "Engineering domain classification",
+  "needs_input": false,
+  "required_input_fields": [],
   "sub_problems": [
     {
       "id": "p1",
@@ -200,6 +213,111 @@ JSON SCHEMA:
   ]
 }
 """
+
+# ── Methods available per domain/problem type ──
+DOMAIN_METHODS = {
+    "algebra": {
+        "simultaneous_equations": [
+            "Substitution Method",
+            "Elimination Method",
+            "Graphical Method",
+            "Matrix Method",
+        ],
+        "quadratic": [
+            "Quadratic Formula",
+            "Factorization",
+            "Completing the Square",
+            "Graphical Method",
+        ],
+        "default": [
+            "Substitution Method",
+            "Elimination Method",
+            "Matrix Method",
+        ],
+    },
+    "structural": {
+        "beam_deflection": [
+            "Direct Integration",
+            "Macaulay's Method",
+            "Area Moment Method",
+            "Virtual Work Method",
+        ],
+        "truss": [
+            "Method of Joints",
+            "Method of Sections",
+            "Direct Stiffness (Matrix)",
+        ],
+        "default": [
+            "Direct Integration",
+            "Virtual Work Method",
+            "Area Moment Method",
+        ],
+    },
+    "calculus": {
+        "integration": [
+            "Direct Integration",
+            "Integration by Parts",
+            "Substitution (Calculus)",
+            "Partial Fractions",
+        ],
+        "default": [
+            "Direct Integration",
+            "Substitution (Calculus)",
+        ],
+    },
+}
+
+
+def _needs_input_check(routing: dict) -> tuple[bool, list]:
+    """Check if Gemini signalled that the input is incomplete."""
+    needs = routing.get("needs_input", False)
+    fields = routing.get("required_input_fields", [])
+    return needs, fields
+
+
+def _needs_method_selection(domain: str, problem_type: str, requested_method: str, user_input: str) -> tuple[bool, list]:
+    """
+    Rule-based: decide if we should prompt the user for a solution method.
+    Returns (should_ask, methods_list).
+    Never ask if the user already specified a method in their message.
+    """
+    if requested_method and requested_method != "auto":
+        return False, []
+
+    method_keywords = [
+        "substitut", "eliminat", "graphical", "matrix", "cramer",
+        "quadratic formula", "factori", "completing the square",
+        "virtual work", "area moment", "method of joints", "method of sections",
+        "integration by parts", "partial fraction", "direct integr",
+    ]
+    user_lower = (user_input or "").lower()
+    if any(kw in user_lower for kw in method_keywords):
+        return False, []
+
+    # Check domain + problem type
+    d = domain.lower()
+    pt = problem_type.lower()
+
+    if d == "algebra":
+        is_simultaneous = any(k in pt for k in ["simultaneous", "system", "linear_system"]) or \
+                          ";" in user_input or " and " in user_input.lower()
+        is_quadratic = any(k in pt for k in ["quadratic"])
+        if is_simultaneous:
+            return True, DOMAIN_METHODS["algebra"]["simultaneous_equations"]
+        if is_quadratic:
+            return True, DOMAIN_METHODS["algebra"]["quadratic"]
+
+    if d == "structural":
+        if any(k in pt for k in ["beam", "deflection", "slope"]):
+            return True, DOMAIN_METHODS["structural"]["beam_deflection"]
+        if any(k in pt for k in ["truss"]):
+            return True, DOMAIN_METHODS["structural"]["truss"]
+
+    if d == "calculus":
+        if any(k in pt for k in ["integral", "integration"]):
+            return True, DOMAIN_METHODS["calculus"]["integration"]
+
+    return False, []
 
 def convert_history(history: list) -> list:
     """
@@ -265,7 +383,7 @@ async def route_input(input_data: str, is_image: bool, history: list = None) -> 
 
             response = await asyncio.wait_for(
                 asyncio.to_thread(
-                    client.models.generate_content,
+                    get_genai_client().models.generate_content,
                     model=model_name,
                     contents=contents,
                     config=types.GenerateContentConfig(
@@ -622,6 +740,8 @@ async def solve(request: Request):
     input_type = raw_data.get("type", "text")
     history = raw_data.get("history", [])
     is_image = input_type == "image"
+    requested_method_top = (raw_data.get("method") or "").strip()
+    cached_routing_top = raw_data.get("cached_routing")  # skip Gemini if provided
 
     if not user_input and not is_image:
         logger.warning("No input provided")
@@ -664,6 +784,14 @@ async def solve(request: Request):
                         }
                     ],
                 }
+            elif cached_routing_top:
+                # ── Use pre-computed routing from frontend (skip Gemini) ──
+                logger.info("Using cached_routing from frontend — skipping Gemini router.")
+                routing = {
+                    "summary": "Cached route",
+                    "_model": "cached-route",
+                    "sub_problems": [cached_routing_top] if isinstance(cached_routing_top, dict) else cached_routing_top,
+                }
             else:
                 try:
                     routing = await route_input(user_input, is_image, history)
@@ -675,6 +803,23 @@ async def solve(request: Request):
 
             if "error" in routing:
                 yield make_error_event("Routing Failed: " + routing["error"])
+                return
+
+            # ── Check if Gemini flagged incomplete input ──
+            if not cached_routing_top and routing.get("needs_input"):
+                fields = routing.get("required_input_fields", [])
+                if not fields:
+                    # Default: two equation fields
+                    fields = [
+                        {"name": "equation_1", "label": "Equation 1", "placeholder": "e.g., 2x + 3y = 7"},
+                        {"name": "equation_2", "label": "Equation 2", "placeholder": "e.g., x - y = 1"},
+                    ]
+                yield make_event({
+                    "type": "needs_input",
+                    "message": "Please provide the missing input values.",
+                    "fields": fields,
+                    "problem_description": user_input,
+                })
                 return
 
             sub_problems = routing.get("sub_problems", [])
@@ -712,9 +857,29 @@ async def solve(request: Request):
                 sub["topic"] = domain
                 sub["requested_method"] = (
                     sub["parameters"].get("method")
-                    or raw_data.get("method")
+                    or requested_method_top
                     or None
                 )
+
+                # ── Method selection popup ──
+                if not cached_routing_top:
+                    should_ask_method, available_methods = _needs_method_selection(
+                        domain, problem_type,
+                        sub["requested_method"] or "",
+                        user_input,
+                    )
+                    if should_ask_method:
+                        yield make_event({
+                            "type": "needs_method",
+                            "message": "Please select a solution method.",
+                            "methods": available_methods,
+                            "domain": domain,
+                            "problem_type": problem_type,
+                            "problem_description": sub.get("input_summary", user_input),
+                            "cached_routing": sub,
+                            "problem_id": problem_id,
+                        })
+                        return
 
                 missing = find_missing_params(
                     domain,
