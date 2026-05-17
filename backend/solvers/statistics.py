@@ -1,4 +1,5 @@
 import asyncio
+import re
 import numpy as np
 from scipy import stats
 
@@ -12,7 +13,6 @@ async def solve_statistics(data):
     data_points = params.get("data", [])
     if not data_points:
         # Try to parse from string if it looks like [1,2,3]
-        import re
         matches = re.findall(r"[-+]?\d*\.\d+|\d+", raw)
         data_points = [float(x) for x in matches]
         

@@ -122,9 +122,9 @@ async def solve_conduction(params):
     ]
     yield {"type": "final", "answer": "\n".join(ans)}
 
-async def solve_heat_transfer_basic(params):
-    yield {"type": "step", "content": "Applying the ideal gas equation of state..."}
-    p = params.get("p")
+async def solve_ideal_gas(params):
+    yield {"type": "step", "content": "Applying the ideal gas equation of state: $PV = nRT$..."}
+    p = params.get("p", params.get("P"))
     v = params.get("v", params.get("V"))
     n = params.get("n")
     t = params.get("t", params.get("T"))
@@ -135,42 +135,52 @@ async def solve_heat_transfer_basic(params):
     n = None if n in (None, "") else float(n)
     t = None if t in (None, "") else float(t)
 
+    known = sum(1 for x in [p, v, n, t] if x is not None)
+    if known < 3:
+        yield {"type": "final", "answer": "Ideal Gas Law ($PV = nRT$) requires any **three** of: Pressure $P$ (Pa), Volume $V$ (m³), Moles $n$ (mol), Temperature $T$ (K)."}
+        return
+
     if p is None and None not in (v, n, t) and v != 0:
         p = n * R * t / v
+        yield {"type": "step", "content": f"Solving for Pressure: $P = nRT/V = {n}×{R:.3f}×{t}/{v} = {p:.3f}$ Pa"}
     elif v is None and None not in (p, n, t) and p != 0:
         v = n * R * t / p
+        yield {"type": "step", "content": f"Solving for Volume: $V = nRT/P = {n}×{R:.3f}×{t}/{p} = {v:.6f}$ m³"}
     elif n is None and None not in (p, v, t) and R * t != 0:
         n = p * v / (R * t)
+        yield {"type": "step", "content": f"Solving for Moles: $n = PV/(RT) = {p}×{v}/({R:.3f}×{t}) = {n:.6f}$ mol"}
     elif t is None and None not in (p, v, n) and n * R != 0:
         t = p * v / (n * R)
-    else:
-        if any(value is None for value in (p, v, n, t)):
-            yield {"type": "final", "answer": "Ideal gas calculations need any three of $P$, $V$, $n$, and $T$."}
-            return
+        yield {"type": "step", "content": f"Solving for Temperature: $T = PV/(nR) = {p}×{v}/({n}×{R:.3f}) = {t:.3f}$ K"}
 
-    x = np.array([1, 2, 3])
-    y = np.array([p / 1000, v, t])
-    yield {"type": "diagram", "diagram_type": "pv_diagram", "data": series_points(x, y)}
+    # P-V isotherm diagram
+    v_range = np.linspace(v * 0.5, v * 2.0, 80)
+    p_range = n * R * t / v_range
+    yield {"type": "diagram", "diagram_type": "pv_diagram", "data": series_points(v_range, p_range / 1000)}
 
     steps = [
-        "### Ideal Gas Law Analysis",
-        f"- Pressure: {p:.3f} Pa",
-        f"- Volume: {v:.6f} m^3",
-        f"- Amount: {n:.6f} mol",
-        f"- Temperature: {t:.3f} K",
-        f"- Validation: $PV = {p * v:.3f}$ and $nRT = {n * R * t:.3f}$",
+        "### Ideal Gas Law: $PV = nRT$",
+        "#### Governing Equation",
+        "$$PV = nRT$$",
+        "#### Results",
+        f"- **Pressure ($P$):** {p:.4f} Pa ({p/1000:.4f} kPa)",
+        f"- **Volume ($V$):** {v:.6f} m³",
+        f"- **Amount ($n$):** {n:.6f} mol",
+        f"- **Temperature ($T$):** {t:.3f} K ({t - 273.15:.2f} °C)",
+        f"- **Verification:** $PV = {p * v:.4f}$ J, $nRT = {n * R * t:.4f}$ J ✓",
     ]
     yield {"type": "final", "answer": "\n".join(steps)}
 
 
 async def solve_heat_transfer_basic(params):
-    yield {"type": "step", "content": "Calculating sensible heat transfer (Calorimetry)..."}
+    yield {"type": "step", "content": "Calculating sensible heat transfer using Calorimetry ($Q = mc\\Delta T$)..."}
     m = float(params.get("m", params.get("mass", 1)))
-    c = float(params.get("c", params.get("sp_heat", 4186)))
-    dt = float(params.get("dt", params.get("delta_t", 10)))
+    c = float(params.get("c", params.get("cp", params.get("sp_heat", 4186))))
+    dt = float(params.get("dt", params.get("delta_t", params.get("dT", 10))))
     q = m * c * dt
 
-    yield {"type": "final", "answer": f"### Calorimetry Report\n- **Mass:** {m:.4f} kg\n- **Specific heat:** {c:.4f} J/(kg·K)\n- **Temperature change:** {dt:.4f} K\n- **Heat energy ($Q$):** {q:.4f} J"}
+    yield {"type": "step", "content": f"$Q = {m:.4f} \\times {c:.4f} \\times {dt:.4f} = {q:.4f}$ J"}
+    yield {"type": "final", "answer": f"### Calorimetry Report\n$$Q = mc\\Delta T$$\n- **Mass ($m$):** {m:.4f} kg\n- **Specific heat ($c_p$):** {c:.4f} J/(kg·K)\n- **Temperature change ($\\Delta T$):** {dt:.4f} K\n- **Heat energy ($Q$):** **{q:.4f} J** ({q/1000:.4f} kJ)"}
 
 
 async def solve_entropy(params):

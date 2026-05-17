@@ -4,7 +4,7 @@ import numpy as np
 from solvers.utils import normalize_params, validate_physical_params
 
 async def solve_controls(data):
-    yield {"type": "step", "content": "Initializng Robust Control Systems Kernel..."}
+    yield {"type": "step", "content": "Initializing Robust Control Systems Kernel..."}
     
     params = normalize_params(data.get("parameters", {}))
     raw = data.get("raw_query", "").lower()
@@ -154,7 +154,13 @@ async def solve_frequency_response(params):
         }
     }
     
-    yield {"type": "final", "answer": "### Frequency Response\\n- **Bode Mapping Complete**: Peak gain and phase margins can be derived from the diagram below."}
+    # Compute gain margin / phase margin estimates
+    pm_idx = next((i for i, m in enumerate(mag) if m <= 0), None)
+    gm_idx = next((i for i, p in enumerate(phase) if p <= -180), None)
+    pm_str = f"{180 + phase[pm_idx]:.1f}°" if pm_idx is not None else "∞"
+    gm_str = f"{-mag[gm_idx]:.1f} dB" if gm_idx is not None else "∞"
+
+    yield {"type": "final", "answer": f"### Frequency Response Analysis\n- **Bode Mapping Complete**\n- **Phase Margin:** {pm_str}\n- **Gain Margin:** {gm_str}\n- **DC Gain:** {mag[0]:.2f} dB\n- Refer to the Bode plot below for magnitude and phase curves."}
 
 def ArrayToLatex(arr):
     if len(arr) == 0: return "None"

@@ -37,6 +37,10 @@ const StudioCanvas = ({ type, data, width = 600, height = 300 }) => {
       renderBodePlot(ctx, w, h, diagramData);
     } else if (type === 'truss_fem') {
       renderTrussDiagram(ctx, w, h, diagramData);
+    } else if (type === 'velocity_profile') {
+      renderVelocityProfile(ctx, w, h, diagramData);
+    } else if (Array.isArray(diagramData)) {
+      renderGenericSeries(ctx, w, h, diagramData, type);
     }
   };
 
@@ -414,15 +418,40 @@ const StudioCanvas = ({ type, data, width = 600, height = 300 }) => {
   };
 
   const renderBeamDiagrams = (ctx, w, h, data) => {
-    if (!data.x || !data.shear || !data.moment) return;
+    if (!data.x) return;
 
     const padding = 30;
+
+    // If we have deflection data (from solve_beam_advanced)
+    if (data.deflection) {
+      const thirdH = (h - padding * 4) / 3;
+
+      // Deflection diagram (top)
+      const deflMM = data.deflection.map(d => d * 1000);
+      drawBeamDiagram(ctx, padding, padding, w - 2 * padding, thirdH, data.x, deflMM, '#f472b6', 'Deflection (mm)');
+
+      // Slope diagram (middle)
+      if (data.slope) {
+        drawBeamDiagram(ctx, padding, padding * 2 + thirdH, w - 2 * padding, thirdH, data.x, data.slope.map(s => s * 1000), '#a78bfa', 'Slope (mrad)');
+      }
+
+      // Reaction annotation (bottom area)
+      ctx.fillStyle = '#60a5fa';
+      ctx.font = 'bold 10px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(`RA = ${(data.RA || 0).toFixed(2)} N`, padding + 10, h - padding - 30);
+      ctx.fillText(`RB = ${(data.RB || 0).toFixed(2)} N`, padding + 10, h - padding - 15);
+      if (data.max_deflection !== undefined) {
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillText(`δmax = ${(data.max_deflection * 1000).toFixed(4)} mm at x = ${(data.max_pos || 0).toFixed(3)} m`, w / 2, h - padding - 15);
+      }
+      return;
+    }
+
+    // Legacy: shear/moment arrays
+    if (!data.shear || !data.moment) return;
     const halfH = (h - padding * 3) / 2;
-
-    // Shear diagram (top)
     drawBeamDiagram(ctx, padding, padding, w - 2 * padding, halfH, data.x, data.shear, '#4ade80', 'Shear (N)');
-
-    // Moment diagram (bottom)
     drawBeamDiagram(ctx, padding, padding * 2 + halfH, w - 2 * padding, halfH, data.x, data.moment, '#60a5fa', 'Moment (Nm)');
   };
 
@@ -476,6 +505,157 @@ const StudioCanvas = ({ type, data, width = 600, height = 300 }) => {
     ctx.fillText(label, x + w / 2, y + padding - 5);
   };
 
+  const renderVelocityProfile = (ctx, w, h, data) => {
+    if (!data || !Array.isArray(data) || data.length === 0) return;
+    const padding = 40;
+    const plotW = w - 2 * padding;
+    const plotH = h - 2 * padding;
+
+    const rVals = data.map(d => d.r !== undefined ? d.r : d.x);
+    const vVals = data.map(d => d.v !== undefined ? d.v : d.y);
+    const minR = Math.min(...rVals);
+    const maxR = Math.max(...rVals);
+    const maxV = Math.max(...vVals);
+    const scaleR = plotW / (maxR - minR || 1);
+    const scaleV = plotH / (maxV || 1);
+    const centerY = h - padding;
+
+    // Axes
+    ctx.strokeStyle = '#ffffff44';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padding, padding);
+    ctx.lineTo(padding, h - padding);
+    ctx.lineTo(w - padding, h - padding);
+    ctx.stroke();
+
+    // Profile fill
+    ctx.fillStyle = 'rgba(59,130,246,0.2)';
+    ctx.beginPath();
+    ctx.moveTo(padding + (rVals[0] - minR) * scaleR, centerY);
+    rVals.forEach((r, i) => {
+      const px = padding + (r - minR) * scaleR;
+      const py = centerY - vVals[i] * scaleV;
+      ctx.lineTo(px, py);
+    });
+    ctx.lineTo(padding + (rVals[rVals.length - 1] - minR) * scaleR, centerY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Profile line
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    rVals.forEach((r, i) => {
+      const px = padding + (r - minR) * scaleR;
+      const py = centerY - vVals[i] * scaleV;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    // Labels
+    ctx.fillStyle = '#60a5fa';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('Velocity Profile', w / 2, padding - 10);
+    ctx.fillStyle = '#ffffff88';
+    ctx.font = '9px monospace';
+    ctx.fillText('Radial position (m)', w / 2, h - 5);
+    ctx.save();
+    ctx.translate(12, h / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('Velocity (m/s)', 0, 0);
+    ctx.restore();
+  };
+
+  const renderGenericSeries = (ctx, w, h, data, diagramType) => {
+    if (!data || data.length === 0) return;
+    const padding = 40;
+    const chartW = w - 2 * padding;
+    const chartH = h - 2 * padding;
+
+    const xs = data.map(p => p.x !== undefined ? p.x : (p.r !== undefined ? p.r : 0));
+    const ys = data.map(p => p.y !== undefined ? p.y : (p.v !== undefined ? p.v : 0));
+    const maxX = Math.max(...xs) || 1;
+    const maxY = Math.max(...ys.map(Math.abs)) || 1;
+    const scaleX = chartW / maxX;
+    const scaleY = chartH / (2 * maxY);
+    const centerY = padding + chartH / 2;
+
+    // Axes
+    ctx.strokeStyle = '#ffffff44';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padding, padding);
+    ctx.lineTo(padding, h - padding);
+    ctx.lineTo(w - padding, h - padding);
+    ctx.stroke();
+
+    // Zero line
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(padding, centerY);
+    ctx.lineTo(w - padding, centerY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Pick color by diagram type
+    const colorMap = {
+      shear: '#4ade80', moment: '#60a5fa', bending: '#60a5fa',
+      force: '#fb923c', axial: '#fb923c', stress: '#f87171',
+      pressure: '#a78bfa', pv_diagram: '#f472b6',
+      displacement: '#fbbf24', energy: '#34d399', angular: '#818cf8',
+    };
+    let color = '#ffffff';
+    for (const [key, val] of Object.entries(colorMap)) {
+      if ((diagramType || '').includes(key)) { color = val; break; }
+    }
+
+    // Fill under curve
+    ctx.fillStyle = color + '22';
+    ctx.beginPath();
+    ctx.moveTo(padding + xs[0] * scaleX, centerY);
+    xs.forEach((x, i) => {
+      ctx.lineTo(padding + x * scaleX, centerY - ys[i] * scaleY);
+    });
+    ctx.lineTo(padding + xs[xs.length - 1] * scaleX, centerY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Curve
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    xs.forEach((x, i) => {
+      const px = padding + x * scaleX;
+      const py = centerY - ys[i] * scaleY;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    // Label
+    ctx.fillStyle = color;
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText((diagramType || 'Series').replace(/_/g, ' ').toUpperCase(), w / 2, padding - 8);
+
+    // Tick labels
+    ctx.fillStyle = '#ffffff66';
+    ctx.font = '9px monospace';
+    const maxPt = ys.indexOf(Math.max(...ys));
+    if (maxPt >= 0) {
+      const px = padding + xs[maxPt] * scaleX;
+      const py = centerY - ys[maxPt] * scaleY;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(px, py, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillText(`${ys[maxPt].toFixed(2)}`, px + 5, py - 5);
+    }
+  };
+
   const downloadFile = (fileData, filename, fileType) => {
     const blob = new Blob([fileData], { type: fileType });
     const url = URL.createObjectURL(blob);
@@ -502,6 +682,13 @@ const StudioCanvas = ({ type, data, width = 600, height = 300 }) => {
 
     // Handle object-based diagrams (not array-based)
     if (typeof data === 'object' && !Array.isArray(data)) {
+      renderDiagram(data);
+      return;
+    }
+
+    // Route special array types through renderDiagram too
+    const specialArrayTypes = ['velocity_profile', 'pv_diagram', 'displacement_curve', 'force_curve', 'energy_curve', 'angular_velocity_curve', 'pressure_curve', 'force_diagram', 'shear', 'bending', 'moment'];
+    if (Array.isArray(data) && specialArrayTypes.some(t => type.includes(t))) {
       renderDiagram(data);
       return;
     }

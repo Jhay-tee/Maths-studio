@@ -266,11 +266,11 @@ async def solve_function_plot(sub):
                      linestyle=params.get("linestyle", '-'), linewidth=2)
             plt.axhline(0, color='white', linewidth=0.5, alpha=0.3)
             plt.axvline(0, color='white', linewidth=0.5, alpha=0.3)
+            plt.style.use('dark_background')
             plt.grid(True, linestyle='--', alpha=0.2)
             plt.title(params.get("title") or f"Plot of ${sp.latex(func_expr)}$")
             plt.xlabel(params.get("xlabel") or var_name)
             plt.ylabel(params.get("ylabel") or ylabel)
-            plt.style.use('dark_background')
         
         buf_png = io.BytesIO()
         plt.savefig(buf_png, format='png', transparent=True, dpi=150)
@@ -443,9 +443,9 @@ async def solve_data_viz(sub: dict):
             }
             return
             
+        plt.style.use('dark_background')
         plt.grid(True, linestyle='--', alpha=0.2)
         plt.legend()
-        plt.style.use('dark_background')
         
         # Exports
         buf_png = io.BytesIO()

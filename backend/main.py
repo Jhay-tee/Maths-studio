@@ -64,45 +64,50 @@ class SafetyMiddleware(BaseHTTPMiddleware):
         client_ip = request.client.host if request.client else "unknown"
         path = request.url.path
 
-        content_length = request.headers.get("content-length")
-        if content_length:
-            try:
-                if int(content_length) > MAX_REQUEST_BYTES:
+        # Only rate-limit and size-check API endpoints, not static assets
+        is_api = path.startswith("/api/")
+
+        if is_api:
+            content_length = request.headers.get("content-length")
+            if content_length:
+                try:
+                    if int(content_length) > MAX_REQUEST_BYTES:
+                        return JSONResponse(
+                            {"error": "Request payload too large."},
+                            status_code=413,
+                        )
+                except ValueError:
+                    pass
+
+            # SSE solve endpoint should be treated more leniently because the request
+            # stays open and poor network conditions can make users retry quickly.
+            is_solve_stream = path == "/api/compute/solve" and "text/event-stream" in str(request.headers.get("accept", "")).lower()
+            window_max = RATE_LIMIT_MAX_REQUESTS
+            if is_solve_stream:
+                window_max = int(os.environ.get("RATE_LIMIT_MAX_REQUESTS_STREAM", str(RATE_LIMIT_MAX_REQUESTS * 2)))
+
+            now = time.monotonic()
+            async with request_windows_lock:
+                window = request_windows.get(client_ip, [])
+                window = [stamp for stamp in window if now - stamp < RATE_LIMIT_WINDOW_SECONDS]
+                if len(window) >= window_max:
+                    # If it's SSE, respond as SSE event so client stream handling doesn't break.
+                    if is_solve_stream:
+                        async def _rate_limited():
+                            yield make_error_event("Too many requests. Please slow down and try again shortly.")
+                        return StreamingResponse(_rate_limited(), media_type="text/event-stream", status_code=429)
+
                     return JSONResponse(
-                        {"error": "Request payload too large."},
-                        status_code=413,
+                        {"error": f"Rate limit exceeded. Request blocked for {RATE_LIMIT_WINDOW_SECONDS} seconds.", "retryAfter": RATE_LIMIT_WINDOW_SECONDS},
+                        status_code=429,
                     )
-            except ValueError:
-                pass
-
-        # SSE solve endpoint should be treated more leniently because the request
-        # stays open and poor network conditions can make users retry quickly.
-        is_solve_stream = path == "/api/compute/solve" and "text/event-stream" in str(request.headers.get("accept", "")).lower()
-        window_max = RATE_LIMIT_MAX_REQUESTS
-        if is_solve_stream:
-            window_max = int(os.environ.get("RATE_LIMIT_MAX_REQUESTS_STREAM", str(RATE_LIMIT_MAX_REQUESTS * 2)))
-
-        now = time.monotonic()
-        async with request_windows_lock:
-            window = request_windows.get(client_ip, [])
-            window = [stamp for stamp in window if now - stamp < RATE_LIMIT_WINDOW_SECONDS]
-            if len(window) >= window_max:
-                # If it's SSE, respond as SSE event so client stream handling doesn't break.
-                if is_solve_stream:
-                    async def _rate_limited():
-                        yield make_error_event("Too many requests. Please slow down and try again shortly.")
-                    return StreamingResponse(_rate_limited(), media_type="text/event-stream", status_code=429)
-
-                return JSONResponse(
-                    {"error": "Too many requests. Please slow down and try again shortly."},
-                    status_code=429,
-                )
-            window.append(now)
-            request_windows[client_ip] = window
+                window.append(now)
+                request_windows[client_ip] = window
 
         response = await call_next(request)
-        response.headers["X-Studio-RateLimit-Limit"] = str(window_max)
-        response.headers["X-Studio-RateLimit-Window"] = str(RATE_LIMIT_WINDOW_SECONDS)
+        if is_api:
+            response.headers["X-Studio-RateLimit-Limit"] = str(window_max)
+            response.headers["X-Studio-RateLimit-Window"] = str(RATE_LIMIT_WINDOW_SECONDS)
         response.headers["X-Studio-Max-Concurrent-Solves"] = str(MAX_CONCURRENT_SOLVES)
         return response
 
