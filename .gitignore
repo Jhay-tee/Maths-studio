@@ -15,3 +15,5 @@ backend/.venv/
 # Frontend build output (if present)
 frontend/dist/
 backend/dist/
+__pycache__/
+*.pyc
