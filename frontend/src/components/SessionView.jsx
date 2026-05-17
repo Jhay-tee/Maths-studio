@@ -17,25 +17,41 @@ const SessionView = ({
     <div className="w-full max-w-5xl mx-auto pb-64 px-4">
       {/* ── Document Header ── */}
       <div className="mb-16 pt-12 relative">
-          <div className="absolute -top-4 left-0 text-[10px] font-black tracking-[0.4em] text-blue-500/40 uppercase">Aeronautical & Mechanical Systems</div>
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b-2 border-white pb-6">
-            <div className="space-y-2">
-              <h1 className="text-4xl md:text-6xl font-black tracking-tighter uppercase leading-[0.8] text-white">STUDIO<br/>REPORT</h1>
-              <div className="flex items-center gap-4 text-[10px] font-mono opacity-40 uppercase tracking-widest mt-4">
-                <span>Kernel v2.4.0</span>
-                <span>•</span>
-                <span>Ref: MS-{Math.floor(Math.random()*10000)}</span>
-                <span>•</span>
-                <span>{new Date().toLocaleTimeString()}</span>
-              </div>
-            </div>
-            <div className="flex flex-col items-end gap-2">
-               <div className={`px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest border transition-all ${isProcessing ? 'bg-blue-500/10 border-blue-500/40 text-blue-400 animate-pulse' : 'bg-green-500/10 border-green-500/40 text-green-400'}`}>
-                 {isProcessing ? 'CALCULATING ENGINE' : 'VERIFIED STOCHASTIC ID'}
-               </div>
-               <div className="text-[10px] font-mono text-white/20 uppercase tracking-widest italic pt-2">Precision Level: NIST Traceable</div>
+        <div className="absolute -top-4 left-0 text-[10px] font-black tracking-[0.4em] text-blue-500/40 uppercase">
+          Engineering Solution
+        </div>
+
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b-2 border-white pb-6">
+          <div className="space-y-2">
+            <h1 className="text-4xl md:text-6xl font-black tracking-tighter uppercase leading-[0.8] text-white">
+              Studio
+              <br />
+              Solution
+            </h1>
+
+            <div className="flex items-center gap-4 text-[10px] font-mono opacity-40 uppercase tracking-widest mt-4">
+              <span>{new Date().toLocaleTimeString()}</span>
+              <span>•</span>
+              <span>{isProcessing ? 'Computing…' : 'Ready'}</span>
             </div>
           </div>
+
+          <div className="flex flex-col items-end gap-2">
+            <div
+              className={`px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest border transition-all ${
+                isProcessing
+                  ? 'bg-blue-500/10 border-blue-500/40 text-blue-400 animate-pulse'
+                  : 'bg-white/5 border-white/10 text-white/60'
+              }`}
+            >
+              {isProcessing ? 'Solving' : 'Completed'}
+            </div>
+
+            <div className="text-[10px] font-mono text-white/20 uppercase tracking-widest italic pt-2">
+              Dark Mode • White Text • Professional Layout
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
